@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 from langserve import add_routes
-from langchain_google_genai import ChatGoogleGenerativeAI
+from Supervisor import agent_executor
 
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
 app = FastAPI(
     title="LangChain Server",
     version="1.0",
@@ -10,7 +9,7 @@ app = FastAPI(
 )
 
 
-add_routes(app, llm)
+add_routes(app, agent_executor)
 
 if __name__ == "__main__":
     import uvicorn
