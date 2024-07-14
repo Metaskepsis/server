@@ -95,24 +95,24 @@ async def create_project_folder(project_name: str, folder_name: str, current_use
 @app.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_new_user(user: UserCreate):
     if not validate_username(user.username):
-        raise HTTPException(status_code=400, detail="Invalid username format")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid username format")
     
     if not validate_password(user.password):
-        raise HTTPException(status_code=400, detail="Invalid password format")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid password format")
     
     if user_exists(user.username):
-        raise HTTPException(status_code=400, detail="Username already exists")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Username already exists")
     
     if not validate_gemini_api_key(user.gemini_api_key):
-        raise HTTPException(status_code=400, detail="Invalid Gemini API key")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid Gemini API key")
     
     try:
         new_user = register_user(user)
         return {"message": "User registered successfully"}
     except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during registration: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error during registration: {str(e)}")
     
 @app.get("/users/me/", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):

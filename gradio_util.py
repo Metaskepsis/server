@@ -35,24 +35,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def api_call_with_error_handling(func: Callable) -> Callable:
-    """Decorator to standardize error handling for API calls."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except requests.HTTPError as e:
+            # Log the error but re-raise it to be handled by the specific function
             error_detail = e.response.json().get("detail", str(e))
             logger.error(f"HTTP error in {func.__name__}: {error_detail}")
-            return APIResponse(success=False, error=error_detail)
+            raise
+        except requests.ConnectionError as e:
+            logger.error(f"Connection error in {func.__name__}: {str(e)}")
+            return APIResponse(success=False, error="Connection error. Please check your internet connection.")
+        except requests.Timeout as e:
+            logger.error(f"Timeout error in {func.__name__}: {str(e)}")
+            return APIResponse(success=False, error="Request timed out. Please try again later.")
         except requests.RequestException as e:
-            error_message = f"Error in {func.__name__}: {str(e)}"
-            logger.error(error_message)
-            if isinstance(e, requests.ConnectionError):
-                return APIResponse(success=False, error="Connection error. Please check your internet connection.")
-            elif isinstance(e, requests.Timeout):
-                return APIResponse(success=False, error="Request timed out. Please try again later.")
-            else:
-                return APIResponse(success=False, error=f"An error occurred: {str(e)}")
+            logger.error(f"Request error in {func.__name__}: {str(e)}")
+            return APIResponse(success=False, error=f"An error occurred: {str(e)}")
     return wrapper
 
 def refresh_token(refresh_token: str) -> Optional[str]:
@@ -73,19 +73,20 @@ def make_api_request(method: str, endpoint: str, token: Optional[str] = None, js
         response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            # Token might be expired, attempt to refresh
-            new_token = refresh_token(token)
-            if new_token:
-                # Retry the request with the new token
-                headers = {"Authorization": f"Bearer {new_token}"}
-                response = requests.request(method, url, headers=headers, json=json, data=data, files=files, timeout=10)
-                response.raise_for_status()
-                return response.json()
-            else:
-                raise AuthenticationError("Authentication failed. Please log in again.")
+        if e.response.content:
+            try:
+                error_data = e.response.json()
+                if isinstance(error_data, list) and error_data:
+                    error_detail = error_data[0].get('msg', str(e))
+                elif isinstance(error_data, dict):
+                    error_detail = error_data.get('detail', str(e))
+                else:
+                    error_detail = str(e)
+                raise APIError(error_detail)
+            except ValueError:
+                raise APIError(str(e))
         else:
-            raise APIError(f"HTTP error occurred: {e}")
+            raise APIError(str(e))
     except requests.exceptions.RequestException as e:
         raise APIError(f"An error occurred: {str(e)}")
 
@@ -113,7 +114,7 @@ def login_api_call(username: str, password: str, new_api_key: str) -> Tuple[str,
     except requests.exceptions.RequestException as e:
         return "", f"Login failed: {str(e)}", False, ""
 
-@api_call_with_error_handling
+api_call_with_error_handling
 def register_api_call(username: str, password: str, gemini_api_key: str) -> APIResponse:
     """Register a new user."""
     data = {
@@ -123,15 +124,12 @@ def register_api_call(username: str, password: str, gemini_api_key: str) -> APIR
     }
     try:
         response = make_api_request('POST', 'register', json=data)
-        if isinstance(response, dict) and "message" in response:
-            return APIResponse(success=True, data=response)
-        return APIResponse(success=False, error="Unexpected response from server")
-    except requests.HTTPError as e:
-        # Extract the error message from the FastAPI response
-        error_detail = e.response.json().get("detail", str(e))
-        return APIResponse(success=False, error=error_detail)
+        return APIResponse(success=True, data=response)
     except APIError as e:
-        return APIResponse(success=False, error=str(e))
+        error_msg = str(e)
+        if "Invalid Gemini API key" in error_msg:
+            error_msg = "Invalid Gemini API key"
+        return APIResponse(success=False, error=error_msg)
 
 
 @api_call_with_error_handling
