@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from typing import List, Dict
+import re
 import os
 import shutil
 import json
@@ -72,24 +73,42 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.post("/projects/{project_name}/folders")
-async def create_project_folder(project_name: str, folder_name: str, current_user: User = Depends(get_current_active_user)):
+@app.post("/projects")
+async def create_project(project: ProjectCreate, current_user: User = Depends(get_current_active_user)):
     """
-    Create a new folder in a specific project.
+    Create a new project for the current user with 'main' and 'temp' folders.
     """
-    project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
-    if not os.path.exists(project_dir):
-        raise HTTPException(status_code=404, detail="Project not found")
+    project_name = project.project_name
+
+    # Validate project name
+    if not re.match(r'^[a-zA-Z0-9_-]+$', project_name):
+        raise HTTPException(status_code=400, detail="Invalid project name. Use only letters, numbers, underscores, and hyphens.")
     
-    folder_path = os.path.join(project_dir, folder_name)
-    if os.path.exists(folder_path):
-        return {"message": f"Folder '{folder_name}' already exists in project '{project_name}'"}
+    project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
+    if os.path.exists(project_dir):
+        raise HTTPException(status_code=400, detail="Project already exists")
     
     try:
-        os.makedirs(folder_path)
-        return {"message": f"Folder '{folder_name}' created successfully in project '{project_name}'"}
+        # Create main project directory
+        os.makedirs(project_dir)
+        
+        # Create 'main' and 'temp' subdirectories
+        os.makedirs(os.path.join(project_dir, "main"))
+        os.makedirs(os.path.join(project_dir, "temp"))
+        
+        # Create project info file with timestamp
+        project_info = {
+            "name": project_name,
+            "created_at": datetime.now().isoformat()
+        }
+        with open(os.path.join(project_dir, "project_info.json"), "w") as f:
+            json.dump(project_info, f)
+        
+        return {"message": f"Project '{project_name}' created successfully with 'main' and 'temp' folders", "created_at": project_info["created_at"]}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating folder: {str(e)}")
+        # If an error occurs, remove the partially created project directory
+        shutil.rmtree(project_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create project: {str(e)}")
 
 
 @app.post("/register", status_code=status.HTTP_201_CREATED)
@@ -149,23 +168,37 @@ async def update_user_api_key(new_api_key: str, current_user: UserInDB = Depends
 @app.post("/projects")
 async def create_project(project_name: str, current_user: User = Depends(get_current_active_user)):
     """
-    Create a new project for the current user with a timestamp.
+    Create a new project for the current user with 'main' and 'temp' folders.
     """
+    # Validate project name
+    if not re.match(r'^[a-zA-Z0-9_-]+$', project_name):
+        raise HTTPException(status_code=400, detail="Invalid project name. Use only letters, numbers, underscores, and hyphens.")
+    
     project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
     if os.path.exists(project_dir):
         raise HTTPException(status_code=400, detail="Project already exists")
     
-    os.makedirs(project_dir)
-    
-    # Create project info file with timestamp
-    project_info = {
-        "name": project_name,
-        "created_at": datetime.now().isoformat()
-    }
-    with open(os.path.join(project_dir, "project_info.json"), "w") as f:
-        json.dump(project_info, f)
-    
-    return {"message": f"Project '{project_name}' created successfully", "created_at": project_info["created_at"]}
+    try:
+        # Create main project directory
+        os.makedirs(project_dir)
+        
+        # Create 'main' and 'temp' subdirectories
+        os.makedirs(os.path.join(project_dir, "main"))
+        os.makedirs(os.path.join(project_dir, "temp"))
+        
+        # Create project info file with timestamp
+        project_info = {
+            "name": project_name,
+            "created_at": datetime.now().isoformat()
+        }
+        with open(os.path.join(project_dir, "project_info.json"), "w") as f:
+            json.dump(project_info, f)
+        
+        return {"message": f"Project '{project_name}' created successfully with 'main' and 'temp' folders", "created_at": project_info["created_at"]}
+    except Exception as e:
+        # If an error occurs, remove the partially created project directory
+        shutil.rmtree(project_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create project: {str(e)}")
 
 @app.get("/projects", response_model=List[Dict[str, str]])
 async def list_projects(current_user: User = Depends(get_current_active_user)):

@@ -183,21 +183,17 @@ def list_projects(token: str) -> List[Dict[str, str]]:
 
 @api_call_with_error_handling
 def create_project(token: str, project_name: str) -> Dict[str, Any]:
-    """Create a new project with 'main' and 'temp' folders."""
-    data = {"project_name": project_name}
-    response = make_api_request('POST', 'projects', token, json=data)
-    
-    if isinstance(response, dict) and "message" in response:
-        # Project created successfully, now create 'main' and 'temp' folders
-        try:
-            make_api_request('POST', f'projects/{project_name}/folders', token, json={"folder_name": "main"})
-            make_api_request('POST', f'projects/{project_name}/folders', token, json={"folder_name": "temp"})
-            return {"message": f"Project '{project_name}' created successfully with 'main' and 'temp' folders"}
-        except Exception as e:
-            logger.error(f"Error creating folders for project {project_name}: {str(e)}")
-            return {"message": f"Project '{project_name}' created, but failed to create 'main' and 'temp' folders"}
-    
-    return response  # Return the original response if project creation failed
+    """Create a new project."""
+    try:
+        data = {"project_name": project_name}
+        response = make_api_request('POST', 'projects', token, json=data)
+        if isinstance(response, dict) and "message" in response:
+            return response
+        else:
+            raise APIError("Unexpected response format from create_project API")
+    except Exception as e:
+        logger.error(f"Error creating project: {str(e)}")
+        raise APIError(f"Failed to create project: {str(e)}")
 
 
 
