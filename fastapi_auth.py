@@ -178,8 +178,8 @@ def update_user_last_login(username: str):
         json.dump(user_data, f, default=str)
         f.truncate()
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
-    """Get the current user based on the provided JWT token."""
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -198,9 +198,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
         raise credentials_exception
     return user
 
-async def get_current_active_user(current_user: UserInDB = Depends(get_current_user)) -> UserInDB:
-    """Get the current active user."""
+async def get_current_active_user(current_user: User = Depends(get_current_user)):
+    logger.info(f"Validating active user: {current_user.username}")
     if current_user.disabled:
+        logger.warning(f"User '{current_user.username}' is disabled")
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 

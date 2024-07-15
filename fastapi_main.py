@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from typing import List, Dict
 import re
@@ -7,12 +7,14 @@ import shutil
 import json
 from pydantic import BaseModel
 from datetime import timedelta, datetime
-from auth import (
+from fastapi_auth import (
     User, UserCreate, Token, UserInDB, user_exists, validate_username, validate_password,
     validate_gemini_api_key, register_user, get_user,  verify_password,create_access_token, get_current_active_user, USERS_DIRECTORY,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
-
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="Project Management API",
@@ -26,6 +28,13 @@ class ProjectCreate(BaseModel):
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Received {request.method} request to {request.url}")
+    response = await call_next(request)
+    logger.info(f"Returned {response.status_code} for {request.method} {request.url}")
+    return response
 
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -222,11 +231,10 @@ async def list_projects(current_user: User = Depends(get_current_active_user)):
 
 @app.get("/projects/{project_name}/files")
 async def list_files(project_name: str, current_user: User = Depends(get_current_active_user)):
-    """
-    List files in a specific project for the current user.
-    """
+    logger.info(f"Received request to list files for project '{project_name}' from user '{current_user.username}'")
     project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
     if not os.path.exists(project_dir):
+        logger.warning(f"Project directory not found for '{project_name}' (user: {current_user.username})")
         raise HTTPException(status_code=404, detail="Project not found")
     
     main_dir = os.path.join(project_dir, "main")
@@ -235,6 +243,7 @@ async def list_files(project_name: str, current_user: User = Depends(get_current
     main_files = [f for f in os.listdir(main_dir)] if os.path.exists(main_dir) else []
     temp_files = [f for f in os.listdir(temp_dir)] if os.path.exists(temp_dir) else []
     
+    logger.info(f"Files found for project '{project_name}' (user: {current_user.username}) - Main: {main_files}, Temp: {temp_files}")
     return {"main": main_files, "temp": temp_files}
 
 @app.post("/upload/{project_name}")
@@ -244,16 +253,20 @@ async def upload_file(
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    Upload a file to a specific project for the current user.
+    Upload a file to a specific project's temp folder for the current user.
     """
     project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
     if not os.path.exists(project_dir):
         raise HTTPException(status_code=404, detail="Project not found")
-    file_location = os.path.join(project_dir, file.filename)
+    
+    temp_dir = os.path.join(project_dir, "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    file_location = os.path.join(temp_dir, file.filename)
     try:
         with open(file_location, "wb+") as file_object:
             shutil.copyfileobj(file.file, file_object)
-        return {"message": f"File '{file.filename}' uploaded to project '{project_name}'"}
+        return {"message": f"File '{file.filename}' uploaded to project '{project_name}' temp folder"}
     except IOError:
         raise HTTPException(status_code=500, detail="Error uploading file")
 

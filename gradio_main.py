@@ -1,73 +1,170 @@
-# gradio_main.py
-
 import gradio as gr
-from typing import Tuple, Dict, List
-import re
-from tabs import create_login_tab, create_project_tab, create_llm_tab, setup_llm_tab
-from gradio_util import (
-    list_projects,
-    handle_login_result,
-    create_project,
-    list_files,
-    validate_token,
-    AuthenticationError
-)
-import requests
+from gradio_handlers import *
 import logging
+from typing import Dict, Tuple
+from config import SERVER_HOST, SERVER_PORT
+
+# Constants
+LOGIN_TAB = "Login/Register"
+PROJECT_TAB = "Project Management"
+LLM_TAB = "LLM Interface"
+CREATE_NEW_PROJECT = "Create New Project"
+CHOOSE_EXISTING_PROJECT = "Choose Existing Project"
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def create_interface():
-    """
-    Create and return the main Gradio interface for the application.
-    This function sets up the entire user interface, including login, project management, and LLM interaction.
-    
-    Returns:
-        gr.Blocks: The main Gradio interface
-    """
-    with gr.Blocks() as interface:
-        # State variables to keep track of user token and selected project across tabs
-        token_state = gr.State("")  # Stores the user's authentication token
-        username_state = gr.State("")  # Stores the logged-in username
-        project_state = gr.State("")  # Stores the currently selected project
+def create_login_tab() -> Dict:
+    with gr.Column():
+        gr.Markdown("## Welcome to the Application")
+        
+        with gr.Row():
+            login_radio = gr.Radio(["Login", "Register"], label="Choose Action", value="Login")
 
-        # Main tab structure of the application
+        with gr.Column(visible=True) as login_column:
+            username_login = gr.Textbox(label="Username", placeholder="Enter your username")
+            password_login = gr.Textbox(label="Password", type="password", placeholder="Enter your password")
+            new_api_key_login = gr.Textbox(label="New Gemini API Key (Optional)", placeholder="Enter new API key to update")
+            login_button = gr.Button("Login")
+
+        with gr.Column(visible=False) as register_column:
+            username_register = gr.Textbox(label="Username", placeholder="Choose a username")
+            password_register = gr.Textbox(label="Password", type="password", placeholder="Choose a password")
+            gemini_api_key_register = gr.Textbox(label="Gemini API Key", placeholder="Enter your Gemini API key")
+            gr.Markdown("Password must be at least 8 characters long, contain uppercase and lowercase letters, a digit, and a special character.")
+            register_button = gr.Button("Register")
+
+        message_box = gr.Textbox(label="Message", interactive=False)
+
+    login_radio.change(
+        lambda choice: (
+            gr.update(visible=choice == "Login"),
+            gr.update(visible=choice == "Register"),
+        ),
+        inputs=[login_radio],
+        outputs=[login_column, register_column],
+    )
+
+    return {
+        'username': username_login,
+        'password': password_login,
+        'new_api_key': new_api_key_login,
+        'login_button': login_button,
+        'message': message_box,
+        'register_button': register_button,
+        'username_register': username_register,
+        'password_register': password_register,
+        'gemini_api_key_register': gemini_api_key_register
+    }
+
+def create_project_tab() -> Dict:
+    with gr.Column() as project_tab:
+        project_action = gr.Radio([CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT], label="Action")
+        new_project_name = gr.Textbox(label="New Project Name", visible=False)
+        project_dropdown = gr.Dropdown(label="Select Existing Project", choices=[])
+        selected_project = gr.Textbox(label="Selected Project", interactive=False)
+        proceed_button = gr.Button("Proceed")
+        message = gr.Textbox(label="Message", interactive=False)
+
+    project_action.change(
+        lambda x: (gr.update(visible=x==CREATE_NEW_PROJECT), gr.update(visible=x==CHOOSE_EXISTING_PROJECT)),
+        inputs=[project_action],
+        outputs=[new_project_name, project_dropdown]
+    )
+
+    return {
+        "project_action": project_action,
+        "new_project_name": new_project_name,
+        "project_dropdown": project_dropdown,
+        "selected_project": selected_project,
+        "proceed_button": proceed_button,
+        "message": message
+    }
+
+def create_llm_tab() -> Dict:
+    with gr.Column() as LLM_Interface:
+        project_name = gr.Markdown("## Current Project: None")
+        
+        with gr.Row():
+            with gr.Column(scale=1):
+                project_selector = gr.Dropdown(label="Select Project", choices=[])
+                create_new_project_button = gr.Button("➕ Create New Project")
+                file_upload = gr.File(label="Upload File")
+                upload_button = gr.Button("Upload")
+                upload_message = gr.Textbox(label="Upload Message", interactive=False)
+                main_files_output = gr.Textbox(label="Main Files", interactive=False)
+                temp_files_output = gr.Textbox(label="Temp Files", interactive=False)
+                file_selector = gr.Dropdown(label="Select File", choices=[])
+                
+            with gr.Column(scale=2):
+                chat_history = gr.Chatbot(label="Chat History")
+                message_input = gr.Textbox(label="Message", placeholder="Type your message here...")
+                send_button = gr.Button("Send")
+                
+            with gr.Column(scale=1):
+                file_content = gr.Textbox(label="File Content", interactive=False)
+
+    return {
+        'project_name': project_name,
+        'project_selector': project_selector,
+        'create_new_project_button': create_new_project_button,
+        'file_upload': file_upload,
+        'upload_button': upload_button,
+        'upload_message': upload_message,
+        'main_files_output': main_files_output,
+        'temp_files_output': temp_files_output,
+        'file_selector': file_selector,
+        'file_content': file_content,
+        'chat_history': chat_history,
+        'message_input': message_input,
+        'send_button': send_button,
+    }
+
+
+def create_interface():
+    with gr.Blocks() as interface:
+        state = gr.State({"token": "", "username": "", "project": ""})
+
         with gr.Tabs() as tabs:
-            # Login/Register tab
-            with gr.Tab("Login/Register", id="login") as login_tab:
+            with gr.Tab(LOGIN_TAB, id="login") as login_tab:
                 login_components = create_login_tab()
 
-            # Project Management tab (initially hidden)
-            with gr.Tab("Project Management", id="project", visible=False) as project_tab:
+            with gr.Tab(PROJECT_TAB, id="project", visible=False) as project_tab:
                 project_components = create_project_tab()
 
-            # LLM Interface tab (initially hidden)
-            with gr.Tab("LLM Interface", id="llm", visible=False) as llm_tab:
+            with gr.Tab(LLM_TAB, id="llm", visible=False) as llm_tab:
                 llm_components = create_llm_tab()
 
-        # Connect login button click to handle_login function and then process the result
+        # Set up event handlers
         login_components['login_button'].click(
-            login_components['login_function'],
+            handle_login,
             inputs=[login_components['username'], login_components['password'], login_components['new_api_key']],
-            outputs=[login_components['token'], login_components['message'], 
-                    login_components['login_success'], login_components['logged_in_username']]
-        ).then(
-            handle_login_result,
-            inputs=[login_components['token'], login_components['message'], 
-                    login_components['login_success'], login_components['logged_in_username']],
-            outputs=[token_state, username_state, login_tab, project_tab, llm_tab, 
-                    login_components['message'], project_components['project_dropdown'], 
-                    project_state, llm_components['project_name']]
-        ).then(
-            update_file_lists,  # New function to safely update file lists
-            inputs=[token_state, project_state],
-            outputs=[gr.State()]  # Store file list result in a temporary state
-        ).then(
-            update_llm_components,  # New function to update LLM components
-            inputs=[gr.State(), project_state],  # Use the temporary state from previous step
+            outputs=[state, login_tab, project_tab, llm_tab,
+                     login_components['message'], project_components['project_dropdown'],
+                     llm_components['project_name']]
+        )
+
+        login_components['register_button'].click(
+            handle_registration,
+            inputs=[login_components['username_register'], login_components['password_register'], login_components['gemini_api_key_register']],
+            outputs=[login_components['message']]
+        )
+
+        project_components['project_action'].change(
+            project_action_handler,
+            inputs=[project_components['project_action'], project_components['new_project_name'], project_components['project_dropdown']],
+            outputs=[project_components['message'], project_components['selected_project']]
+        )
+
+        project_components['proceed_button'].click(
+            proceed_with_project,
+            inputs=[state, project_components['selected_project']],
             outputs=[
+                project_components['message'],
+                project_tab,
+                llm_tab,
+                state,
                 llm_components['project_name'],
                 llm_components['main_files_output'],
                 llm_components['temp_files_output'],
@@ -75,196 +172,58 @@ def create_interface():
             ]
         )
 
-        # Function to validate project name
-        def validate_project_name(name: str) -> Tuple[bool, str]:
-            """
-            Validate the project name according to specified rules.
-            
-            Args:
-                name (str): The project name to validate
-            
-            Returns:
-                Tuple[bool, str]: A tuple containing a boolean indicating if the name is valid,
-                                  and a string with an error message if invalid.
-            """
-            if not name:
-                return False, "Project name cannot be empty"
-            if not re.match(r'^[a-zA-Z0-9_-]+$', name):
-                return False, "Invalid project name. Use only letters, numbers, underscores, and hyphens."
-            return True, ""
-
-        # Function to handle project creation or selection
-        def project_action_handler(token: str, action: str, new_project_name: str, existing_project: str) -> Tuple:
-            """
-            Handle project creation or selection based on user action.
-            
-            Args:
-                token (str): User authentication token
-                action (str): Action chosen by user ('Create New Project' or 'Choose Existing Project')
-                new_project_name (str): Name of the new project to create
-                existing_project (str): Name of the existing project selected
-            
-            Returns:
-                Tuple: Contains updated UI components and project information
-            """
-            if action == "Create New Project":
-                # Validate the new project name
-                is_valid, error_message = validate_project_name(new_project_name)
-                if not is_valid:
-                    return error_message, None, gr.update(), gr.update(), *update_visibility(False, True, False), None, gr.update(), "", ""
-                
-                # Attempt to create the new project
-                result = create_project(token, new_project_name)
-                if isinstance(result, dict) and "message" in result:
-                    message = result["message"]
-                    project = new_project_name
-                else:
-                    message = "Failed to create project"
-                    project = None
-            else:
-                message = "Project selected"
-                project = existing_project
-
-            if project:
-                # Fetch updated project list and file information
-                projects = list_projects(token)
-                project_names = [p["name"] for p in projects]
-                
-                files = list_files(token, project)
-                main_files = "\n".join(files.get("main", []))
-                temp_files = "\n".join(files.get("temp", []))
-                
-                return (
-                    message, project, 
-                    gr.update(choices=project_names, value=project),  # Update Project tab's dropdown
-                    gr.update(choices=project_names, value=project),  # Update LLM tab's project selector
-                    *update_visibility(False, False, True),
-                    project,
-                    gr.update(value=f"## Current Project: {project}"),
-                    main_files, temp_files
-                )
-            else:
-                return (
-                    message, None, 
-                    gr.update(), gr.update(), 
-                    *update_visibility(False, True, False),
-                    None, gr.update(), "", ""
-                )
-
-        # Connect project action button to project_action_handler function
-        project_components['proceed_button'].click(
-            project_action_handler,
-            inputs=[token_state, project_components['project_action'], 
-                    project_components['new_project_name'], project_components['project_dropdown']],
-            outputs=[project_components['message'], project_components['selected_project'], 
-                     project_components['project_dropdown'], llm_components['project_selector'], 
-                     project_tab, project_tab, llm_tab, 
-                     project_state, llm_components['project_name'], 
-                     llm_components['main_files_output'], llm_components['temp_files_output']]
-        )
-
-        # Function to update project selection in LLM tab
-        def update_project_selection(project_name: str, token: str) -> Tuple:
-            """
-            Update the project selection in the LLM tab.
-            
-            Args:
-                project_name (str): Name of the selected project
-                token (str): User authentication token
-            
-            Returns:
-                Tuple: Contains updated UI components for the LLM tab
-            """
-            if project_name:
-                projects = list_projects(token)
-                project = next((p for p in projects if p["name"] == project_name), None)
-                if project:
-                    files = list_files(token, project_name)
-                    main_files = "\n".join(files.get("main", []))
-                    temp_files = "\n".join(files.get("temp", []))
-                    return (
-                        gr.update(value=f"## Current Project: {project_name}"),
-                        project_name,
-                        main_files,
-                        temp_files
-                    )
-            return (
-                gr.update(value="## Current Project: None"),
-                "",
-                "", ""
-            )
-
-        # Add event handler for the project selector in the LLM tab
         llm_components['project_selector'].change(
             update_project_selection,
-            inputs=[llm_components['project_selector'], token_state],
+            inputs=[llm_components['project_selector'], state],
             outputs=[
                 llm_components['project_name'],
-                project_state,
+                state,
                 llm_components['main_files_output'],
-                llm_components['temp_files_output']
+                llm_components['temp_files_output'],
+                llm_components['file_selector']
             ]
         )
 
-        # Function to update project lists in both Project and LLM tabs
-        def update_project_lists(token: str) -> Tuple[gr.update, gr.update]:
-            """
-            Update the project lists in both Project and LLM tabs.
-            
-            Args:
-                token (str): User authentication token
-            
-            Returns:
-                Tuple[gr.update, gr.update]: Updates for project dropdowns in both tabs
-            """
-            try:
-                projects = list_projects(token)
-                project_names = [p["name"] for p in projects]
-                return (
-                    gr.update(choices=project_names),  # Project tab dropdown
-                    gr.update(choices=project_names),  # LLM tab project selector
-                )
-            except AuthenticationError:
-                # If authentication fails, don't change tab visibility
-                return (
-                    gr.update(choices=[]),     # Project tab dropdown
-                    gr.update(choices=[]),     # LLM tab project selector
-                )
+        llm_components['upload_button'].click(
+            upload_and_update,
+            inputs=[llm_components['file_upload'], state],
+            outputs=[
+                llm_components['upload_message'],
+                llm_components['main_files_output'], 
+                llm_components['temp_files_output'],
+                llm_components['file_selector']
+            ]
+        )
+
+        llm_components['send_button'].click(
+            send_message,
+            inputs=[llm_components['message_input'], llm_components['chat_history']],
+            outputs=[llm_components['chat_history'], llm_components['message_input']]
+        )
+
+        llm_components['create_new_project_button'].click(
+            switch_to_project_tab,
+            outputs=[tabs, project_tab, llm_tab]
+        )
 
         # Update project lists when tabs are selected or project state changes
-        for trigger in [project_tab.select, llm_tab.select, project_state.change]:
+        for trigger in [project_tab.select, llm_tab.select, state.change]:
             trigger(
                 update_project_lists,
-                inputs=[token_state],
-                outputs=[
-                    project_components['project_dropdown'], 
-                    llm_components['project_selector']
-                ]
+                inputs=[state],
+                outputs=[project_components['project_dropdown'], llm_components['project_selector']]
             )
 
-        # Set up the LLM tab functionality
-        update_project_list_func, update_file_lists_func = setup_llm_tab(llm_components, token_state, project_state)
-
-        # Function to update LLM tab
-        def update_llm_tab():
-            """
-            Update the LLM tab with current project and file information.
-            
-            Returns:
-                Tuple: Contains updated project list and file information for the LLM tab
-            """
-            projects = update_project_list_func()
-            file_lists = update_file_lists_func()
-            if isinstance(file_lists, tuple) and len(file_lists) == 2:
-                main_files, temp_files = file_lists
-            else:
-                main_files = temp_files = ""
-                logger.warning(f"Unexpected return from update_file_lists_func: {file_lists}")
+        async def update_llm_tab(state):
+            token = state['token']
+            project = state['project']
+            projects = await update_project_lists(token)
+            main_files, temp_files = await update_file_lists(token, project)
             return projects, main_files, temp_files
 
-        # Update LLM tab when it becomes visible
         llm_tab.select(
             update_llm_tab,
+            inputs=[state],
             outputs=[
                 llm_components['project_selector'],
                 llm_components['main_files_output'],
@@ -272,103 +231,16 @@ def create_interface():
             ]
         )
 
-        # Function to switch to the project tab
-        def switch_to_project_tab():
-            """
-            Switch to the project tab and update visibility.
-            
-            Returns:
-                Tuple: Contains updates for tab selection and visibility
-            """
-            return gr.update(selected="project"), gr.update(visible=True), gr.update(visible=False)
-
-        # Handle "Create New Project" button click in LLM tab
-        llm_components['create_new_project_button'].click(
-            switch_to_project_tab,
-            outputs=[tabs, project_tab, llm_tab]
-        ).then(
-            lambda token: list_projects(token),
-            inputs=[token_state],
-            outputs=[project_components['project_dropdown']]
-        )
-
-        # Function to check and update token validity
-        def check_and_update_token(token: str) -> Tuple[str, gr.update, gr.update, gr.update]:
-            """
-            Check the validity of the user token and update tab visibility accordingly.
-            
-            Args:
-                token (str): User authentication token
-            
-            Returns:
-                Tuple[str, gr.update, gr.update, gr.update]: Updated token and visibility for tabs
-            """
-            if validate_token(token):
-                return token, gr.update(visible=False), gr.update(visible=True), gr.update(visible=True)
-            else:
-                return "", gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
-
         # Add token validation when switching to project or LLM tabs
         for tab in [project_tab, llm_tab]:
             tab.select(
                 check_and_update_token,
-                inputs=[token_state],
-                outputs=[token_state, login_tab, project_tab, llm_tab]
+                inputs=[state],
+                outputs=[state, login_tab, project_tab, llm_tab]
             )
 
     return interface
 
-def update_visibility(login_visible: bool, project_visible: bool, llm_visible: bool) -> Tuple[gr.update, gr.update, gr.update]:
-    """
-    Update the visibility of main interface tabs.
-    
-    Args:
-        login_visible (bool): Whether the login tab should be visible
-        project_visible (bool): Whether the project tab should be visible
-        llm_visible (bool): Whether the LLM tab should be visible
-    
-    Returns:
-        Tuple[gr.update, gr.update, gr.update]: Update instructions for each tab's visibility
-    """
-    return tuple(gr.update(visible=v) for v in (login_visible, project_visible, llm_visible))
-
-def update_file_lists(token: str, project: str) -> Dict[str, List[str]]:
-    """
-    Safely update the file lists for a given project.
-    
-    Args:
-        token (str): User authentication token
-        project (str): Name of the project
-    
-    Returns:
-        Dict[str, List[str]]: Dictionary containing 'main' and 'temp' file lists
-    """
-    if not project:
-        return {"main": [], "temp": []}
-    try:
-        return list_files(token, project)
-    except Exception as e:
-        logger.error(f"Error listing files: {str(e)}")
-        return {"main": [], "temp": []}
-
-def update_llm_components(files: Dict[str, List[str]], project: str) -> Tuple[gr.update, str, str, gr.update]:
-    """
-    Update the LLM components with current project and file information.
-    
-    Args:
-        files (Dict[str, List[str]]): Dictionary containing 'main' and 'temp' file lists
-        project (str): Name of the current project
-    
-    Returns:
-        Tuple[gr.update, str, str, gr.update]: Updates for LLM components
-    """
-    return (
-        gr.update(value=f"## Current Project: {project}" + (" (No files)" if not any(files.values()) else "")),
-        "\n".join(files.get("main", [])),
-        "\n".join(files.get("temp", [])),
-        gr.update(choices=files.get("main", []) + files.get("temp", []))
-    )
-
 if __name__ == "__main__":
     demo = create_interface()
-    demo.launch(server_name="127.0.0.1", server_port=7860)
+    demo.launch(server_name=SERVER_HOST, server_port=SERVER_PORT)
