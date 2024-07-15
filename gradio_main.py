@@ -3,7 +3,6 @@ from gradio_handlers import *
 from gradio_state_config import State, SERVER_HOST, SERVER_PORT, LOGIN_TAB, PROJECT_TAB, LLM_TAB, CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT
 import logging
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -30,10 +29,7 @@ def create_login_tab() -> Dict:
         message_box = gr.Textbox(label="Message", interactive=False)
 
     login_radio.change(
-        lambda choice: (
-            gr.update(visible=choice == "Login"),
-            gr.update(visible=choice == "Register"),
-        ),
+        lambda choice: (choice == "Login", choice == "Register"),
         inputs=[login_radio],
         outputs=[login_column, register_column],
     )
@@ -60,7 +56,7 @@ def create_project_tab() -> Dict:
         message = gr.Textbox(label="Message", interactive=False)
 
     project_action.change(
-        lambda x: (gr.update(visible=x==CREATE_NEW_PROJECT), gr.update(visible=x==CHOOSE_EXISTING_PROJECT)),
+        lambda x: (x==CREATE_NEW_PROJECT, x==CHOOSE_EXISTING_PROJECT),
         inputs=[project_action],
         outputs=[new_project_name, project_dropdown]
     )
@@ -118,21 +114,38 @@ def create_interface():
         state = gr.State(State().to_json())
 
         with gr.Tabs() as tabs:
-            with gr.Tab(LOGIN_TAB, id="login") as login_tab:
-                with gr.Column(visible=True) as login_content:
+            with gr.TabItem(LOGIN_TAB, id=LOGIN_TAB) as login_tab:
+                login_content = gr.Column(visible=True)
+                with login_content:
                     login_components = create_login_tab()
 
-            with gr.Tab(PROJECT_TAB, id="project") as project_tab:
-                with gr.Column(visible=False) as project_content:
+            with gr.TabItem(PROJECT_TAB, id=PROJECT_TAB) as project_tab:
+                project_content = gr.Column(visible=False)
+                with project_content:
                     project_components = create_project_tab()
 
-            with gr.Tab(LLM_TAB, id="llm") as llm_tab:
-                with gr.Column(visible=False) as llm_content:
+            with gr.TabItem(LLM_TAB, id=LLM_TAB) as llm_tab:
+                llm_content = gr.Column(visible=False)
+                with llm_content:
                     llm_components = create_llm_tab()
 
-        # Set up event handlers
+        def login_handler(username, password, new_api_key, state_json):
+            new_state, login_visible, project_visible, llm_visible, message, project_choices, project_name, main_files, temp_files, file_choices = handle_login(username, password, new_api_key, state_json)
+            return [
+                new_state,
+                gr.update(visible=login_visible),
+                gr.update(visible=project_visible),
+                gr.update(visible=llm_visible),
+                message,
+                gr.update(choices=project_choices),
+                gr.update(value=project_name),
+                main_files,
+                temp_files,
+                gr.update(choices=file_choices)
+            ]
+
         login_components['login_button'].click(
-            handle_login,
+            login_handler,
             inputs=[login_components['username'], login_components['password'], login_components['new_api_key'], state],
             outputs=[
                 state,
@@ -154,14 +167,31 @@ def create_interface():
             outputs=[login_components['message']]
         )
 
+        def project_action_handler_wrapper(action, new_name, existing):
+            message, selected = project_action_handler(action, new_name, existing)
+            return [message, selected]
+
         project_components['project_action'].change(
-            project_action_handler,
+            project_action_handler_wrapper,
             inputs=[project_components['project_action'], project_components['new_project_name'], project_components['project_dropdown']],
             outputs=[project_components['message'], project_components['selected_project']]
         )
 
+        def proceed_with_project_wrapper(state, selected_project):
+            message, project_visible, llm_visible, new_state, project_name, main_files, temp_files, file_choices = proceed_with_project(state, selected_project)
+            return [
+                message,
+                gr.update(visible=project_visible),
+                gr.update(visible=llm_visible),
+                new_state,
+                gr.update(value=project_name),
+                main_files,
+                temp_files,
+                gr.update(choices=file_choices)
+            ]
+
         project_components['proceed_button'].click(
-            proceed_with_project,
+            proceed_with_project_wrapper,
             inputs=[state, project_components['selected_project']],
             outputs=[
                 project_components['message'],
@@ -175,8 +205,18 @@ def create_interface():
             ]
         )
 
+        def update_project_selection_wrapper(project_name, state):
+            project_name, new_state, main_files, temp_files, file_choices = update_project_selection(project_name, state)
+            return [
+                gr.update(value=project_name),
+                new_state,
+                main_files,
+                temp_files,
+                gr.update(choices=file_choices)
+            ]
+
         llm_components['project_selector'].change(
-            update_project_selection,
+            update_project_selection_wrapper,
             inputs=[llm_components['project_selector'], state],
             outputs=[
                 llm_components['project_name'],
@@ -187,8 +227,17 @@ def create_interface():
             ]
         )
 
+        def upload_and_update_wrapper(file, state):
+            message, main_files, temp_files, file_choices = upload_and_update(file, state)
+            return [
+                message,
+                main_files,
+                temp_files,
+                gr.update(choices=file_choices)
+            ]
+
         llm_components['upload_button'].click(
-            upload_and_update,
+            upload_and_update_wrapper,
             inputs=[llm_components['file_upload'], state],
             outputs=[
                 llm_components['upload_message'],
@@ -204,34 +253,43 @@ def create_interface():
             outputs=[llm_components['chat_history'], llm_components['message_input']]
         )
 
+        def switch_to_project_tab_wrapper():
+            tab, project_visible, llm_visible = switch_to_project_tab()
+            return [gr.update(selected=tab), gr.update(visible=project_visible), gr.update(visible=llm_visible)]
+
         llm_components['create_new_project_button'].click(
-            switch_to_project_tab,
+            switch_to_project_tab_wrapper,
             outputs=[tabs, project_content, llm_content]
         )
 
-        # Periodically update project lists
         interface.load(
-            update_project_lists,
-            inputs=[state],
-            outputs=[project_components['project_dropdown'], llm_components['project_selector']],
-            every=5  # Update every 5 seconds
+            lambda: (True, False, False),
+            outputs=[login_tab, project_tab, llm_tab]
         )
 
-        # Update LLM tab when selected
+        def update_project_lists_wrapper(state):
+            project_choices, _ = update_project_lists(state)
+            return [
+                gr.update(choices=project_choices),
+                gr.update(choices=project_choices)
+            ]
+
         llm_tab.select(
-            lambda state: update_project_lists(State.from_json(state)),
+            update_project_lists_wrapper,
             inputs=[state],
             outputs=[
                 llm_components['project_selector'],
-                llm_components['main_files_output'],
-                llm_components['temp_files_output']
+                project_components['project_dropdown']
             ]
         )
 
-        # Add token validation when switching to project or LLM tabs
+        def check_and_update_token_wrapper(state):
+            new_state, login_visible, project_visible, llm_visible = check_and_update_token(state)
+            return [new_state, gr.update(visible=login_visible), gr.update(visible=project_visible), gr.update(visible=llm_visible)]
+
         for tab in [project_tab, llm_tab]:
             tab.select(
-                lambda state: check_and_update_token(State.from_json(state)),
+                check_and_update_token_wrapper,
                 inputs=[state],
                 outputs=[state, login_content, project_content, llm_content]
             )

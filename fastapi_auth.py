@@ -184,7 +184,27 @@ async def get_current_active_user(current_user: User = Depends(get_current_user)
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
-
+def update_user_api_key(username: str, new_api_key: str) -> None:
+    """Update the user's Gemini API key in their credentials file."""
+    user_dir = os.path.join(USERS_DIRECTORY, username)
+    credentials_file = os.path.join(user_dir, "credentials.json")
+    
+    try:
+        # Read the current credentials
+        with open(credentials_file, 'r') as f:
+            credentials = json.load(f)
+        
+        # Update the API key
+        credentials['gemini_api_key'] = new_api_key
+        
+        # Write the updated credentials back to the file
+        with open(credentials_file, 'w') as f:
+            json.dump(credentials, f, indent=4)
+        
+        logger.info(f"Updated Gemini API key for user: {username}")
+    except Exception as e:
+        logger.error(f"Failed to update Gemini API key for user {username}: {str(e)}")
+        raise
 
 def get_user_api_key(username: str) -> str:
     """Get the user's current Gemini API key."""
@@ -215,13 +235,20 @@ async def validate_gemini_api_key(api_key: str) -> bool:
         logger.info(f"Attempting to validate Gemini API key: {api_key[:5]}...")  # Log first 5 characters of API key
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data, timeout=10) as response:
-                await response.raise_for_status()
-        logger.info("Gemini API key validation successful")
-        return True
+                if response.status == 200:
+                    logger.info("Gemini API key validation successful")
+                    return True
+                else:
+                    response_text = await response.text()
+                    logger.error(f"Gemini API key validation failed. Status: {response.status}, Response: {response_text}")
+                    return False
     except aiohttp.ClientError as e:
         logger.error(f"Error validating Gemini API key: {str(e)}")
         if hasattr(e, 'status'):
             logger.error(f"Response status code: {e.status}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error validating Gemini API key: {str(e)}")
         return False
 
 def get_username_from_token(token: str) -> str:

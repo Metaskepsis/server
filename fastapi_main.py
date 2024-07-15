@@ -54,31 +54,44 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
     
     # Handle Gemini API key
-    new_api_key = form_data.scopes[0] if form_data.scopes else ""  # Assuming the new key is passed in the scopes field
+    new_api_key = form_data.scopes[0] if form_data.scopes else ""
     
-    if not new_api_key:
-        # Check if the existing API key is valid
-        if not validate_gemini_api_key(user.gemini_api_key):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Saved Gemini API key is no longer valid",
-            )
-    else:
+    if new_api_key:
         # Validate and update the new API key
-        if validate_gemini_api_key(new_api_key):
-            update_user_api_key(user.username, new_api_key)
+        if await validate_gemini_api_key(new_api_key):
+            try:
+                update_user_api_key(user.username, new_api_key)
+                api_key_message = "New Gemini API key is valid and has been updated."
+                logger.info(f"Updated Gemini API key for user: {user.username}")
+            except Exception as e:
+                logger.error(f"Failed to update API key for user {user.username}: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to update API key",
+                )
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Provided Gemini API key is not valid",
             )
+    else:
+        # Check if the existing API key is valid
+        if await validate_gemini_api_key(user.gemini_api_key):
+            api_key_message = "Existing Gemini API key is valid."
+        else:
+            api_key_message = "Existing Gemini API key is no longer valid. Please provide a new one."
     
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "api_key_status": api_key_message
+    }
 
 
 @app.post("/register", status_code=status.HTTP_201_CREATED)
