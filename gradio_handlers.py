@@ -83,7 +83,6 @@ async def project_action_handler(action: str, new_project_name: str, existing_pr
         return "", existing_project
 
 
-
 async def proceed_with_project(state_json: str, selected_project: str) -> Tuple[str, bool, bool, str, str, str, str, List[str]]:
     state = State.from_json(state_json)
     if not selected_project:

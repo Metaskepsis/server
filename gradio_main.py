@@ -186,8 +186,8 @@ def create_interface():
         async def handle_create_project(new_name, state_json):
             message, new_state, project_names = await create_new_project(state_json, new_name)
             if "Error:" in message:
-                return message, gr.update(), state_json  # Don't update state or project list if there's an error
-            return message, gr.update(choices=project_names), new_state
+                return message, new_state, gr.update(), gr.update()
+            return message, new_state, gr.update(choices=project_names), gr.update(choices=project_names)
 
         project_components['proceed_button'].click(
             handle_create_project,
@@ -199,7 +199,7 @@ def create_interface():
                 project_components['message'],
                 state,
                 project_components['project_dropdown'],
-                llm_components['project_selector']  # Add this line
+                llm_components['project_selector']
             ]
         )
 
