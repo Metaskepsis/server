@@ -1,5 +1,5 @@
 import gradio as gr
-from state_config import State, LOGIN_TAB, PROJECT_TAB, LLM_TAB, CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT, MAX_UPLOAD_SIZE, ALLOWED_FILE_TYPES
+from gradio_state_config import State, LOGIN_TAB, PROJECT_TAB, LLM_TAB, CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT, MAX_UPLOAD_SIZE, ALLOWED_FILE_TYPES
 import gradio_calls as api
 import logging
 from typing import Dict, List, Tuple
@@ -129,17 +129,23 @@ async def proceed_with_project(state: State, project: str) -> Tuple:
         logger.error(f"Error proceeding with project: {str(e)}")
         return f"Error: {str(e)}", gr.update(visible=True), gr.update(visible=False), state, gr.update(), "", "", gr.update(choices=[])
 
-async def update_project_lists(state: State) -> Tuple[gr.update, gr.update]:
+async def update_project_lists(state_json: str) -> Tuple[gr.update, gr.update]:
     try:
-        if not state.token:
+        state_dict = json.loads(state_json)
+        token = state_dict.get('token', '')
+        
+        if not token:
             raise api.AuthenticationError("No token found in state")
         
-        projects = await api.list_projects(state.token)
+        projects = await api.list_projects(token)
         project_names = [p["name"] for p in projects]
         return (
             gr.update(choices=project_names, value=project_names[0] if project_names else None),
             gr.update(choices=project_names, value=project_names[0] if project_names else None),
         )
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON string for state")
+        return gr.update(choices=[]), gr.update(choices=[])
     except api.AuthenticationError as e:
         logger.error(f"Authentication error: {str(e)}")
         return gr.update(choices=[]), gr.update(choices=[])

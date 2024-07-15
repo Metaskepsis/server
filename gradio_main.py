@@ -1,6 +1,6 @@
 import gradio as gr
 from gradio_handlers import *
-from state_config import State, SERVER_HOST, SERVER_PORT, LOGIN_TAB, PROJECT_TAB, LLM_TAB, CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT
+from gradio_state_config import State, SERVER_HOST, SERVER_PORT, LOGIN_TAB, PROJECT_TAB, LLM_TAB, CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT
 import logging
 
 # Set up logging
