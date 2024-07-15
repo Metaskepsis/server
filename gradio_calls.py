@@ -8,7 +8,7 @@ import logging
 import os
 import mimetypes
 import asyncio
-
+import urllib.parse
 # Constants
 API_URL = "http://localhost:8000"
 DEFAULT_ERROR_MESSAGE = "An unexpected error occurred"
@@ -174,9 +174,10 @@ async def list_files(token: str, project_name: str) -> Dict[str, List[str]]:
         response = await make_api_request('GET', f'projects/{project_name}/files', token=token)
         logger.info(f"Received response for project '{project_name}': {response}")
         if isinstance(response, dict):
+            # Decode URL-encoded file names
             return {
-                "main": response.get("main", []),
-                "temp": response.get("temp", [])
+                "main": [urllib.parse.unquote(file) for file in response.get("main", [])],
+                "temp": [urllib.parse.unquote(file) for file in response.get("temp", [])]
             }
         else:
             logger.warning(f"Unexpected response type from list_files for project '{project_name}': {type(response)}")
@@ -187,6 +188,14 @@ async def list_files(token: str, project_name: str) -> Dict[str, List[str]]:
     except Exception as e:
         logger.error(f"Error listing files for project '{project_name}': {str(e)}")
         raise
+
+import os
+import mimetypes
+import logging
+from typing import Dict
+import urllib.parse
+
+logger = logging.getLogger(__name__)
 
 @api_call_with_error_handling
 async def upload_file(token: str, project_name: str, file_path: str) -> Dict[str, str]:
@@ -205,9 +214,12 @@ async def upload_file(token: str, project_name: str, file_path: str) -> Dict[str
         # Check file type
         mime_type, _ = mimetypes.guess_type(file_path)
         text_types = ['text/', 'application/pdf', 'application/json', 'application/xml']
-        if not any(mime_type.startswith(text_type) for text_type in text_types):
+        if not mime_type or not any(mime_type.startswith(text_type) for text_type in text_types):
             logger.warning(f"Invalid file type: {mime_type}")
             return {"status": "error", "message": "Invalid file type. Only text files, PDFs, JSONs, and XMLs are allowed."}
+
+        # Get the correct file name
+        file_name = os.path.basename(file_path)
 
         # Read file content
         with open(file_path, "rb") as f:
@@ -217,14 +229,14 @@ async def upload_file(token: str, project_name: str, file_path: str) -> Dict[str
                 return {"status": "error", "message": "The selected file is empty. Please choose a file with content."}
             
             # Upload to temp folder
-            temp_folder = f"temp/{project_name}"
-            files = {'file': (os.path.basename(file_path), content, mime_type)}
-            response = await make_api_request('POST', f'upload/{temp_folder}', token, files=files)
+            files = {'file': (file_name, content, mime_type)}
+            response = await make_api_request('POST', f'upload/{project_name}/temp', token, files=files)
             
-            if response.get("message"):
+            if isinstance(response, dict) and "message" in response:
                 return {"status": "success", "message": response["message"]}
             else:
-                return {"status": "error", "message": "File upload failed due to an unknown error"}
+                logger.error(f"Unexpected response from server: {response}")
+                return {"status": "error", "message": "File upload failed due to an unexpected server response"}
     except Exception as e:
         logger.error(f"Error during file upload: {str(e)}")
         return {"status": "error", "message": f"An error occurred during file upload: {str(e)}"}

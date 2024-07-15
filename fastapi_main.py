@@ -290,7 +290,7 @@ async def list_files(project_name: str, current_user: User = Depends(get_current
     logger.info(f"Files found for project '{project_name}' (user: {current_user.username}) - Main: {main_files}, Temp: {temp_files}")
     return {"main": main_files, "temp": temp_files}
 
-@app.post("/upload/{project_name}")
+@app.post("/upload/{project_name}/temp")
 async def upload_file(
     project_name: str, 
     file: UploadFile = File(...), 

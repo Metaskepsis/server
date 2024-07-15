@@ -6,6 +6,13 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def toggle_login_register(choice):
+    try:
+        return gr.update(visible=choice == "Login"), gr.update(visible=choice == "Register")
+    except Exception as e:
+        logger.error(f"Error in toggle_login_register: {str(e)}")
+        return gr.update(visible=True), gr.update(visible=False)
+
 def create_login_tab() -> Dict:
     with gr.Column():
         gr.Markdown("## Welcome to the Application")
@@ -71,8 +78,8 @@ def create_llm_tab() -> Dict:
                 file_upload = gr.File(label="Upload File")
                 upload_button = gr.Button("Upload")
                 upload_message = gr.Textbox(label="Upload Message", interactive=False)
-                main_files_output = gr.Textbox(label="Main Files", interactive=False)
-                temp_files_output = gr.Textbox(label="Temp Files", interactive=False)
+                main_files_output = temp_files_output = gr.Dataframe(headers=["Main Files"],row_count=(5, "dynamic"),col_count=(1, "fixed"),interactive=False,wrap=True)
+                temp_files_output = temp_files_output = gr.Dataframe(headers=["Temp Files"],row_count=(5, "dynamic"),col_count=(1, "fixed"),interactive=False,wrap=True)
                 file_selector = gr.Dropdown(label="Select File", choices=[])
                 
             with gr.Column(scale=2):
@@ -116,40 +123,14 @@ def create_interface():
             with llm_tab:
                 llm_components = create_llm_tab()
 
-        def toggle_login_register(choice):
-            try:
-                return gr.update(visible=choice == "Login"), gr.update(visible=choice == "Register")
-            except Exception as e:
-                logger.error(f"Error in toggle_login_register: {str(e)}")
-                return gr.update(visible=True), gr.update(visible=False)
-
         login_components['login_radio'].change(
             toggle_login_register,
             inputs=[login_components['login_radio']],
             outputs=[login_components['login_column'], login_components['register_column']]
         )
 
-        async def login_handler(username, password, new_api_key, state_json):
-            try:
-                new_state, login_visible, project_visible, llm_visible, message, project_choices, project_name, main_files, temp_files, file_choices = await handle_login(username, password, new_api_key, state_json)
-                return [
-                    new_state,
-                    gr.update(visible=login_visible),
-                    gr.update(visible=project_visible),
-                    gr.update(visible=llm_visible),
-                    message,
-                    gr.update(choices=project_choices),
-                    gr.update(value=project_name),
-                    main_files,
-                    temp_files,
-                    gr.update(choices=file_choices)
-                ]
-            except Exception as e:
-                logger.error(f"Error in login_handler: {str(e)}")
-                return [state_json, gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), f"An error occurred: {str(e)}", gr.update(), gr.update(), "", "", gr.update()]
-
         login_components['login_button'].click(
-            login_handler,
+            handle_login,
             inputs=[login_components['username'], login_components['password'], login_components['new_api_key'], state],
             outputs=[
                 state,
@@ -171,50 +152,35 @@ def create_interface():
             outputs=[login_components['message']]
         )
 
-        def toggle_project_inputs(action):
-            if action == CREATE_NEW_PROJECT:
-                return gr.update(visible=True), gr.update(visible=False)
-            else:
-                return gr.update(visible=False), gr.update(visible=True)
-
         project_components['project_action'].change(
-            toggle_project_inputs,
+            lambda action: (gr.update(visible=action == CREATE_NEW_PROJECT), gr.update(visible=action != CREATE_NEW_PROJECT)),
             inputs=[project_components['project_action']],
             outputs=[project_components['new_project_name'], project_components['project_dropdown']]
         )
 
-        async def handle_create_project(new_name, state_json):
-            message, new_state, project_names = await create_new_project(state_json, new_name)
-            if "Error:" in message:
-                return message, new_state, gr.update(), gr.update()
-            return message, new_state, gr.update(choices=project_names), gr.update(choices=project_names)
-
         project_components['proceed_button'].click(
-            handle_create_project,
+            handle_project_selection,
             inputs=[
+                project_components['project_action'],
                 project_components['new_project_name'],
+                project_components['project_dropdown'],
                 state
             ],
             outputs=[
                 project_components['message'],
                 state,
                 project_components['project_dropdown'],
-                llm_components['project_selector']
+                llm_components['project_selector'],
+                gr.Checkbox(visible=False)  # This is a temporary checkbox to hold the boolean value
             ]
+        ).then(
+            conditional_tab_switch,
+            inputs=[gr.Checkbox(visible=False)],  # This corresponds to the temporary checkbox
+            outputs=[login_tab, project_tab, llm_tab]
         )
 
-        async def update_project_selection_wrapper(project_name, state):
-            project_name, new_state, main_files, temp_files, file_choices = await update_project_selection(project_name, state)
-            return [
-                project_name,
-                new_state,
-                main_files,
-                temp_files,
-                gr.update(choices=file_choices)
-            ]
-
         llm_components['project_selector'].change(
-            update_project_selection_wrapper,
+            update_project_selection,
             inputs=[llm_components['project_selector'], state],
             outputs=[
                 llm_components['project_name'],
@@ -225,17 +191,8 @@ def create_interface():
             ]
         )
 
-        async def upload_and_update_wrapper(file, state):
-            upload_message, main_files, temp_files, file_choices = await upload_and_update(file, state)
-            return [
-                upload_message,
-                main_files,
-                temp_files,
-                gr.update(choices=file_choices)
-            ]
-
         llm_components['upload_button'].click(
-            upload_and_update_wrapper,
+            upload_and_update,
             inputs=[llm_components['file_upload'], state],
             outputs=[
                 llm_components['upload_message'],
@@ -245,20 +202,30 @@ def create_interface():
             ]
         )
 
-        async def send_message_wrapper(message, chat_history, state):
-            chat_history, message = await send_message(message, chat_history, state)
-            return [
-                chat_history,
-                message
-            ]
-
         llm_components['send_button'].click(
-            send_message_wrapper,
+            send_message,
             inputs=[llm_components['message_input'], llm_components['chat_history'], state],
             outputs=[
                 llm_components['chat_history'],
                 llm_components['message_input']
             ]
+        )
+        llm_components['create_new_project_button'].click(
+            switch_to_project_tab,
+            outputs=[
+                login_tab, 
+                project_tab, 
+                llm_tab, 
+                project_components['project_action'],
+                project_components['new_project_name'],
+                project_components['project_dropdown']
+            ]
+        )
+        tabs.select(
+            update_project_dropdown,
+            inputs=[state],
+            outputs=[project_components['project_dropdown']],
+            js="(index) => index === 1"  # Assuming project tab is index 1
         )
 
     return interface
