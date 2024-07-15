@@ -8,10 +8,10 @@ from typing import Optional, Union
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from dotenv import load_dotenv
-import shutil
 import re
 import logging
-import requests
+import aiohttp
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -147,27 +147,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-def register_user(user: UserCreate) -> UserInDB:
-    """Register a new user."""
-    
-    user_dir = os.path.join(USERS_DIRECTORY, user.username)
-    os.makedirs(os.path.join(user_dir, "projects"), exist_ok=True)
-    
-    hashed_password = get_password_hash(user.password)
-    user_dict = {
-        "username": user.username,
-        "hashed_password": hashed_password,
-        "disabled": False,
-        "gemini_api_key": user.gemini_api_key,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "last_login": None
-    }
-    
-    with open(os.path.join(user_dir, "credentials.json"), "w") as f:
-        json.dump(user_dict, f)
-    
-    return UserInDB(**user_dict)
-
 def update_user_last_login(username: str):
     """Update the user's last login time."""
     user_file = os.path.join(USERS_DIRECTORY, username, "credentials.json")
@@ -217,7 +196,7 @@ def get_user_api_key(username: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve API key: {str(e)}")
 
-def validate_gemini_api_key(api_key: str) -> bool:
+async def validate_gemini_api_key(api_key: str) -> bool:
     """Validate the Gemini API key by making a test request."""
     if not api_key or not api_key.strip():
         logger.error("Empty API key provided")
@@ -234,15 +213,15 @@ def validate_gemini_api_key(api_key: str) -> bool:
     
     try:
         logger.info(f"Attempting to validate Gemini API key: {api_key[:5]}...")  # Log first 5 characters of API key
-        response = requests.post(url, headers=headers, json=data, timeout=10)
-        response.raise_for_status()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=data, timeout=10) as response:
+                await response.raise_for_status()
         logger.info("Gemini API key validation successful")
         return True
-    except requests.RequestException as e:
+    except aiohttp.ClientError as e:
         logger.error(f"Error validating Gemini API key: {str(e)}")
-        if hasattr(e, 'response'):
-            logger.error(f"Response status code: {e.response.status_code}")
-            logger.error(f"Response content: {e.response.text}")
+        if hasattr(e, 'status'):
+            logger.error(f"Response status code: {e.status}")
         return False
 
 def get_username_from_token(token: str) -> str:

@@ -36,6 +36,7 @@ def create_login_tab() -> Dict:
             register_button = gr.Button("Register")
 
         message_box = gr.Textbox(label="Message", interactive=False)
+        login_message = gr.Textbox(label="Login Message", interactive=False)
 
     login_radio.change(
         lambda choice: (
@@ -52,6 +53,7 @@ def create_login_tab() -> Dict:
         'new_api_key': new_api_key_login,
         'login_button': login_button,
         'message': message_box,
+        'login_message': login_message,
         'register_button': register_button,
         'username_register': username_register,
         'password_register': password_register,
@@ -140,9 +142,20 @@ def create_interface():
         login_components['login_button'].click(
             handle_login,
             inputs=[login_components['username'], login_components['password'], login_components['new_api_key']],
-            outputs=[state, login_tab, project_tab, llm_tab,
-                     login_components['message'], project_components['project_dropdown'],
-                     llm_components['project_name']]
+            outputs=[
+                state,  # token
+                state,  # username
+                login_tab,  # visibility
+                project_tab,  # visibility
+                llm_tab,  # visibility
+                login_components['login_message'],  # Add this line
+                project_components['project_dropdown'],
+                state,  # current project
+                llm_components['project_name'],
+                llm_components['main_files_output'],
+                llm_components['temp_files_output'],
+                llm_components['file_selector']
+            ]
         )
 
         login_components['register_button'].click(

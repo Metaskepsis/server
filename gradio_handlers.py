@@ -5,8 +5,6 @@ import re
 from typing import Dict, List, Tuple, Optional
 from gradio_calls import *
 import logging
-import tempfile
-import os
 import aiohttp
 
 # Set up logging
@@ -19,7 +17,7 @@ async def handle_login(username: str, password: str, new_api_key: str) -> Tuple:
         
         if not success:
             logger.warning(f"Login failed: {message}")
-            return ("", "", *update_visibility(True, False, False), message, gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
+            return ("", "", gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), message, gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
         
         logger.info(f"Login successful for user '{logged_in_username}' with token {token[:5]}...")
         
@@ -28,7 +26,7 @@ async def handle_login(username: str, password: str, new_api_key: str) -> Tuple:
             
             if not projects:
                 logger.info(f"No projects found for user '{logged_in_username}'")
-                return (token, logged_in_username, *update_visibility(False, True, False), message, gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
+                return (token, logged_in_username, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), message, gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
             
             most_recent_project = projects[0]["name"]
             logger.info(f"Projects found for user '{logged_in_username}'. Most recent: '{most_recent_project}'")
@@ -36,7 +34,9 @@ async def handle_login(username: str, password: str, new_api_key: str) -> Tuple:
             return (
                 token,
                 logged_in_username,
-                *update_visibility(False, False, True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
                 message,
                 gr.update(choices=[p["name"] for p in projects], value=most_recent_project),
                 most_recent_project,
@@ -48,11 +48,11 @@ async def handle_login(username: str, password: str, new_api_key: str) -> Tuple:
         
         except Exception as e:
             logger.error(f"Error fetching projects for user '{logged_in_username}': {str(e)}")
-            return (token, logged_in_username, *update_visibility(False, True, False), f"{message} (Error fetching projects)", gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
+            return (token, logged_in_username, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), f"{message} (Error fetching projects)", gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
     
     except Exception as e:
         logger.error(f"Login error: {str(e)}")
-        return ("", "", *update_visibility(True, False, False), str(e), gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
+        return ("", "", gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), str(e), gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
 
 def update_visibility(login_visible: bool, project_visible: bool, llm_visible: bool) -> Tuple[gr.update, gr.update, gr.update]:
     """Update the visibility of main interface tabs."""

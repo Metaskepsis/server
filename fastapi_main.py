@@ -7,11 +7,7 @@ import shutil
 import json
 from pydantic import BaseModel
 from datetime import timedelta, datetime
-from fastapi_auth import (
-    User, UserCreate, Token, UserInDB, user_exists, validate_username, validate_password,
-    validate_gemini_api_key, register_user, get_user,  verify_password,create_access_token, get_current_active_user, USERS_DIRECTORY,
-    ACCESS_TOKEN_EXPIRE_MINUTES
-)
+from fastapi_auth import *
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -82,6 +78,62 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+
+@app.post("/register", status_code=status.HTTP_201_CREATED)
+async def register_new_user(user: UserCreate):
+    # Step 1: Validate username format
+    if not validate_username(user.username):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid username format"
+        )
+    
+    # Step 2: Check if username already exists
+    if user_exists(user.username):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already exists"
+        )
+    
+    # Step 3: Validate password format
+    if not validate_password(user.password):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid password format"
+        )
+    
+    # Step 4: Validate Gemini API key
+    if not await validate_gemini_api_key(user.gemini_api_key):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid Gemini API key"
+        )
+    
+    # Step 5: Create user directory and save user data
+    try:
+        user_dir = os.path.join(USERS_DIRECTORY, user.username)
+        os.makedirs(os.path.join(user_dir, "projects"), exist_ok=True)
+        
+        hashed_password = get_password_hash(user.password)
+        user_dict = {
+            "username": user.username,
+            "hashed_password": hashed_password,
+            "disabled": False,
+            "gemini_api_key": user.gemini_api_key,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_login": None
+        }
+        
+        with open(os.path.join(user_dir, "credentials.json"), "w") as f:
+            json.dump(user_dict, f)
+        
+        return {"message": "User registered successfully"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error during registration: {str(e)}"
+        )
+
 @app.post("/projects")
 async def create_project(project: ProjectCreate, current_user: User = Depends(get_current_active_user)):
     """
@@ -119,29 +171,6 @@ async def create_project(project: ProjectCreate, current_user: User = Depends(ge
         shutil.rmtree(project_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Failed to create project: {str(e)}")
 
-
-@app.post("/register", status_code=status.HTTP_201_CREATED)
-async def register_new_user(user: UserCreate):
-    if not validate_username(user.username):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid username format")
-    
-    if not validate_password(user.password):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid password format")
-    
-    if user_exists(user.username):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Username already exists")
-    
-    if not validate_gemini_api_key(user.gemini_api_key):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid Gemini API key")
-    
-    try:
-        new_user = register_user(user)
-        return {"message": "User registered successfully"}
-    except ValueError as ve:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(ve))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error during registration: {str(e)}")
-    
 @app.get("/users/me/", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     """
