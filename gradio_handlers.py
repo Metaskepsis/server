@@ -1,157 +1,125 @@
-# handlers.py
-
 import gradio as gr
-import re
-from typing import Dict, List, Tuple, Optional
-from gradio_calls import *
+from state_config import State, LOGIN_TAB, PROJECT_TAB, LLM_TAB, CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT, MAX_UPLOAD_SIZE, ALLOWED_FILE_TYPES
+import gradio_calls as api
 import logging
-import aiohttp
+from typing import Dict, List, Tuple
+import json
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def handle_login(username: str, password: str, new_api_key: str) -> Tuple:
+async def handle_login(username: str, password: str, new_api_key: str, state: State) -> Tuple:
     try:
-        token, message, success, logged_in_username = await login_api_call(username, password, new_api_key)
+        token, message, success, logged_in_username = await api.login_api_call(username, password, new_api_key)
         
         if not success:
             logger.warning(f"Login failed: {message}")
-            return ("", "", gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), message, gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
-        
-        logger.info(f"Login successful for user '{logged_in_username}' with token {token[:5]}...")
-        
-        try:
-            projects = await list_projects(token)
-            
-            if not projects:
-                logger.info(f"No projects found for user '{logged_in_username}'")
-                return (token, logged_in_username, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), message, gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
-            
-            most_recent_project = projects[0]["name"]
-            logger.info(f"Projects found for user '{logged_in_username}'. Most recent: '{most_recent_project}'")
-            
             return (
-                token,
-                logged_in_username,
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=True),
-                message,
-                gr.update(choices=[p["name"] for p in projects], value=most_recent_project),
-                most_recent_project,
-                gr.update(value=f"## Current Project: {most_recent_project}"),
-                "",
-                "",
-                gr.update(choices=[])
+                state.to_json(),
+                gr.update(visible=True),        # login_content
+                gr.update(visible=False),       # project_content
+                gr.update(visible=False),       # llm_content
+                message,                        # login_components['message']
+                gr.update(choices=[]),          # project_components['project_dropdown']
+                gr.update(),                    # llm_components['project_name']
+                "",                             # llm_components['main_files_output']
+                "",                             # llm_components['temp_files_output']
+                gr.update(choices=[])           # llm_components['file_selector']
             )
         
-        except Exception as e:
-            logger.error(f"Error fetching projects for user '{logged_in_username}': {str(e)}")
-            return (token, logged_in_username, gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), f"{message} (Error fetching projects)", gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
+        logger.info(f"Login successful for user '{logged_in_username}'")
+        state.update(token=token, username=logged_in_username)
+        
+        projects = await api.list_projects(token)
+        
+        if not projects:
+            logger.info(f"No projects found for user '{logged_in_username}'")
+            return (
+                state.to_json(),
+                gr.update(visible=False),                          # login_content
+                gr.update(visible=True),                           # project_content
+                gr.update(visible=False),                          # llm_content
+                message,                                           # login_components['message']
+                gr.update(choices=[]),                             # project_components['project_dropdown']
+                gr.update(),                                       # llm_components['project_name']
+                "",                                                # llm_components['main_files_output']
+                "",                                                # llm_components['temp_files_output']
+                gr.update(choices=[])                              # llm_components['file_selector']
+            )
+        
+        most_recent_project = projects[0]["name"]
+        logger.info(f"Projects found for user '{logged_in_username}'. Most recent: '{most_recent_project}'")
+        
+        state.update(project=most_recent_project)
+        
+        return (
+            state.to_json(),
+            gr.update(visible=False),                          # login_content
+            gr.update(visible=False),                          # project_content
+            gr.update(visible=True),                           # llm_content
+            message,                                           # login_components['message']
+            gr.update(choices=[p["name"] for p in projects], value=most_recent_project),  # project_components['project_dropdown']
+            gr.update(value=f"## Current Project: {most_recent_project}"),  # llm_components['project_name']
+            "",                                                # llm_components['main_files_output']
+            "",                                                # llm_components['temp_files_output']
+            gr.update(choices=[])                              # llm_components['file_selector']
+        )
     
     except Exception as e:
         logger.error(f"Login error: {str(e)}")
-        return ("", "", gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), str(e), gr.update(choices=[]), "", gr.update(), "", "", gr.update(choices=[]))
-
-def update_visibility(login_visible: bool, project_visible: bool, llm_visible: bool) -> Tuple[gr.update, gr.update, gr.update]:
-    """Update the visibility of main interface tabs."""
-    return tuple(gr.update(visible=v) for v in (login_visible, project_visible, llm_visible))
-
-async def validate_token(token: str) -> bool:
-    """Validate the token by making a test request."""
-    try:
-        await make_api_request('GET', 'users/me', token)
-        return True
-    except aiohttp.ClientResponseError as e:
-        if e.status == 401:
-            return False
-        else:
-            raise
-    except Exception:
-        return False
+        return (
+            state.to_json(),
+            gr.update(visible=True),        # login_content
+            gr.update(visible=False),       # project_content
+            gr.update(visible=False),       # llm_content
+            str(e),                         # login_components['message']
+            gr.update(choices=[]),          # project_components['project_dropdown']
+            gr.update(),                    # llm_components['project_name']
+            "",                             # llm_components['main_files_output']
+            "",                             # llm_components['temp_files_output']
+            gr.update(choices=[])           # llm_components['file_selector']
+        )
 
 async def handle_registration(username: str, password: str, api_key: str) -> str:
     if not username or not password or not api_key:
         return "All fields are required."
-    if not 6 <= len(username) <= 20:
-        return "Username must be between 6 and 20 characters."
-    if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$', password):
-        return "Password must be at least 8 characters long, contain uppercase and lowercase letters, a digit, and a special character."
-
-    result = await register_api_call(username, password, api_key)
+    
+    result = await api.register_api_call(username, password, api_key)
     if result.success:
         return "Registration successful. Please log in."
     else:
         return f"Registration failed: {result.error}"
 
-async def upload_and_update(file: gr.File, state: Dict[str, str]):
-    if not state['project']:
-        return "No project selected", "", "", gr.update(choices=[])
-
-    if file is None:
-        return "No file selected", "", "", gr.update(choices=[])
-
-    token = state['token']
-    project_name = state['project']
-
-    try:
-        files = {'file': (file.name, file.read(), file.type)}
-        response = await make_api_request('POST', f'upload/{project_name}', token=token, files=files)
-        
-        if isinstance(response, dict) and "message" in response:
-            message = response["message"]
-            files = await update_file_lists(token, project_name)
-            main_files = "\n".join(files.get("main", []))
-            temp_files = "\n".join(files.get("temp", []))
-            file_choices = files.get("main", []) + files.get("temp", [])
-            return message, main_files, temp_files, gr.update(choices=file_choices)
-        else:
-            return "Upload failed: Unexpected response from server", "", "", gr.update(choices=[])
-    except AuthenticationError:
-        return "Authentication failed. Please log in again.", "", "", gr.update(choices=[])
-    except APIError as e:
-        return f"Upload failed: {str(e)}", "", "", gr.update(choices=[])
-    except Exception as e:
-        return f"An unexpected error occurred: {str(e)}", "", "", gr.update(choices=[])
-
-async def send_message(message: str, history: List[Tuple[str, str]]) -> Tuple[List[Tuple[str, str]], str]:
-    # This is a placeholder. Implement actual LLM integration here.
-    history.append((message, "This is a placeholder response. The actual LLM integration is not implemented yet."))
-    return history, ""
-
-def switch_to_project_tab():
-    return gr.update(selected="project"), gr.update(visible=True), gr.update(visible=False)        
-
-def project_action_handler(action: str, new_project_name: str, existing_project: str) -> Tuple[str, str]:
-    if action == "Create New Project":
+async def project_action_handler(action: str, new_project_name: str, existing_project: str) -> Tuple[str, str]:
+    if action == CREATE_NEW_PROJECT:
         if not new_project_name:
             return "Project name cannot be empty", ""
-        if not re.match(r'^[a-zA-Z0-9_-]+$', new_project_name):
-            return "Invalid project name. Use only letters, numbers, underscores, and hyphens.", ""
         return "", new_project_name
     else:
         return "", existing_project
 
-async def proceed_with_project(token: str, project: str) -> Tuple:
+async def proceed_with_project(state: State, project: str) -> Tuple:
     if not project:
-        return "No project selected", gr.update(visible=True), gr.update(visible=False), project, gr.update(), "", "", gr.update(choices=[])
+        return "No project selected", gr.update(visible=True), gr.update(visible=False), state.to_json(), gr.update(), "", "", gr.update(choices=[])
     
     try:
-        projects = await list_projects(token)
-        project_names = [p["name"] for p in projects]
+        state_dict = json.loads(state)
+        token = state_dict.get('token', '')
         
-        files = await list_files(token, project)
-        if files is None:
-            files = {"main": [], "temp": []}
+        files = await api.list_files(token, project)
         main_files = "\n".join(files.get("main", []))
         temp_files = "\n".join(files.get("temp", []))
+        
+        state_dict['project'] = project
+        new_state = json.dumps(state_dict)
         
         return (
             f"Proceeding with project: {project}",
             gr.update(visible=False),
             gr.update(visible=True),
-            project,
+            new_state,
             gr.update(value=f"## Current Project: {project}"),
             main_files,
             temp_files,
@@ -159,74 +127,120 @@ async def proceed_with_project(token: str, project: str) -> Tuple:
         )
     except Exception as e:
         logger.error(f"Error proceeding with project: {str(e)}")
-        return f"Error: {str(e)}", gr.update(visible=True), gr.update(visible=False), "", gr.update(), "", "", gr.update(choices=[])
+        return f"Error: {str(e)}", gr.update(visible=True), gr.update(visible=False), state, gr.update(), "", "", gr.update(choices=[])
 
-async def update_project_selection(project_name: str, token: str) -> Tuple:
-    if project_name:
-        try:
-            files = await list_files(token, project_name)
-            main_files = "\n".join(files.get("main", []))
-            temp_files = "\n".join(files.get("temp", []))
-            return (
-                gr.update(value=f"## Current Project: {project_name}"),
-                project_name,
-                main_files,
-                temp_files,
-                gr.update(choices=files.get("main", []) + files.get("temp", []))
-            )
-        except (AuthenticationError, APIError) as e:
-            logger.error(f"Error updating project selection: {str(e)}")
-            return (
-                gr.update(value="## Current Project: Error"),
-                "",
-                "",
-                "",
-                gr.update(choices=[])
-            )
-    return (
-        gr.update(value="## Current Project: None"),
-        "",
-        "",
-        "",
-        gr.update(choices=[])
-    )
-
-async def update_project_lists(token: str) -> Tuple[gr.update, gr.update]:
+async def update_project_lists(state: State) -> Tuple[gr.update, gr.update]:
     try:
-        projects = await list_projects(token)
+        if not state.token:
+            raise api.AuthenticationError("No token found in state")
+        
+        projects = await api.list_projects(state.token)
         project_names = [p["name"] for p in projects]
         return (
             gr.update(choices=project_names, value=project_names[0] if project_names else None),
             gr.update(choices=project_names, value=project_names[0] if project_names else None),
         )
-    except AuthenticationError:
-        return (
-            gr.update(choices=[]),
-            gr.update(choices=[]),
-        )
-
-async def update_file_lists(token: str, project: str) -> Dict[str, List[str]]:
-    logger.info(f"update_file_lists called with token: {token[:5]}... and project: {project}")
-    if not token:
-        logger.error("Attempted to update file lists without a token")
-        return {"main": [], "temp": []}
-    if not project:
-        logger.warning("Attempted to update file lists with no project selected")
-        return {"main": [], "temp": []}
-    try:
-        logger.info(f"Calling list_files for project '{project}' with token {token[:5]}...")
-        files = await list_files(token, project)
-        logger.info(f"Files retrieved for project '{project}': {files}")
-        return files
-    except AuthenticationError:
-        logger.error(f"Authentication failed when updating file lists for project '{project}'")
-        return {"main": [], "temp": []}
+    except api.AuthenticationError as e:
+        logger.error(f"Authentication error: {str(e)}")
+        return gr.update(choices=[]), gr.update(choices=[])
     except Exception as e:
-        logger.error(f"Error updating file lists for project '{project}': {str(e)}")
-        return {"main": [], "temp": []}
+        logger.error(f"Error updating project lists: {str(e)}")
+        return gr.update(choices=[]), gr.update(choices=[])
 
-async def check_and_update_token(token: str) -> Tuple[str, gr.update, gr.update, gr.update]:
-    if await validate_token(token):
-        return token, gr.update(visible=False), gr.update(visible=True), gr.update(visible=True)
-    else:
-        return "", gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
+async def upload_and_update(file: gr.File, state: State) -> Tuple[str, str, str, gr.update]:
+    try:
+        if not state.token or not state.project:
+            logger.warning("Missing token or project name in state during file upload")
+            return "Upload failed: No active project or session", "", "", gr.update(choices=[])
+
+        # Check file size
+        if file.size > MAX_UPLOAD_SIZE:
+            return f"File is too big. Maximum allowed size is {MAX_UPLOAD_SIZE / (1024 * 1024):.2f} MB.", "", "", gr.update(choices=[])
+
+        # Check file type
+        if file.type not in ALLOWED_FILE_TYPES:
+            return "Invalid file type. Only text files, PDFs, JSONs, and XMLs are allowed.", "", "", gr.update(choices=[])
+
+        # Upload the file
+        upload_result = await api.upload_file(state.token, state.project, file.name)
+        
+        if upload_result.get("status") == "error":
+            return upload_result.get("message", "Upload failed"), "", "", gr.update(choices=[])
+
+        # Fetch updated file lists
+        files = await api.list_files(state.token, state.project)
+        
+        main_files = "\n".join(files.get("main", []))
+        temp_files = "\n".join(files.get("temp", []))
+        all_files = files.get("main", []) + files.get("temp", [])
+        
+        return (
+            f"File '{file.name}' uploaded successfully",  # upload_message
+            main_files,  # main_files_output
+            temp_files,  # temp_files_output
+            gr.update(choices=all_files)  # file_selector
+        )
+    except Exception as e:
+        logger.error(f"Error in upload_and_update: {str(e)}")
+        return f"Upload failed: {str(e)}", "", "", gr.update(choices=[])
+
+async def update_project_selection(project_name: str, state: State) -> Tuple[gr.update, str, str, str, gr.update]:
+    try:
+        if not state.token:
+            logger.warning("No token found in state during project selection")
+            return gr.update(), state.to_json(), "", "", gr.update(choices=[])
+        
+        # Update the current project in the state
+        state.update(project=project_name)
+        
+        # Fetch files for the selected project
+        files = await api.list_files(state.token, project_name)
+        
+        main_files = "\n".join(files.get("main", []))
+        temp_files = "\n".join(files.get("temp", []))
+        all_files = files.get("main", []) + files.get("temp", [])
+        
+        return (
+            gr.update(value=f"## Current Project: {project_name}"),  # project_name
+            state.to_json(),  # updated state
+            main_files,  # main_files_output
+            temp_files,  # temp_files_output
+            gr.update(choices=all_files)  # file_selector
+        )
+    except Exception as e:
+        logger.error(f"Error in update_project_selection: {str(e)}")
+        return gr.update(), state.to_json(), "", "", gr.update(choices=[])
+
+async def send_message(message: str, chat_history: List[Dict[str, str]], state: State) -> Tuple[List[Dict[str, str]], str]:
+    try:
+        state.add_chat_message("user", message)
+        response = await api.send_message_to_llm(state.token, state.project, message)
+        state.add_chat_message("assistant", response)
+        return state.chat_history, ""
+    except Exception as e:
+        logger.error(f"Error in send_message: {str(e)}")
+        return chat_history, f"Error: {str(e)}"
+
+def switch_to_project_tab():
+    return gr.update(selected=PROJECT_TAB), gr.update(visible=True), gr.update(visible=False)
+
+async def check_and_update_token(state: State) -> Tuple[str, gr.update, gr.update, gr.update]:
+    try:
+        if not state.token:
+            logger.warning("No token found in state during token validation")
+            state.clear()
+            return state.to_json(), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
+        
+        is_valid = await api.validate_token(state.token)
+        
+        if is_valid:
+            logger.info("Token validated successfully")
+            return state.to_json(), gr.update(visible=False), gr.update(visible=True), gr.update(visible=True)
+        else:
+            logger.warning("Token validation failed")
+            state.clear()
+            return state.to_json(), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
+    except Exception as e:
+        logger.error(f"Error in check_and_update_token: {str(e)}")
+        state.clear()
+        return state.to_json(), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Request, Body
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from typing import List, Dict
 import re
@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from datetime import timedelta, datetime
 from fastapi_auth import *
 import logging
+import google.generativeai as genai
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # Initialize FastAPI app
@@ -298,6 +300,112 @@ async def upload_file(
         return {"message": f"File '{file.filename}' uploaded to project '{project_name}' temp folder"}
     except IOError:
         raise HTTPException(status_code=500, detail="Error uploading file")
+
+@app.get("/validate_token")
+async def validate_token(current_user: User = Depends(get_current_active_user)):
+    """
+    Validate the user's token.
+    """
+    return {"valid": True}
+
+@app.get("/projects/{project_name}/files/{file_name}")
+async def get_file_content(
+    project_name: str,
+    file_name: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get the content of a specific file in a project.
+    """
+    project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
+    if not os.path.exists(project_dir):
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    main_file = os.path.join(project_dir, "main", file_name)
+    temp_file = os.path.join(project_dir, "temp", file_name)
+    
+    if os.path.exists(main_file):
+        file_path = main_file
+    elif os.path.exists(temp_file):
+        file_path = temp_file
+    else:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    try:
+        with open(file_path, "r") as file:
+            content = file.read()
+        return {"content": content}
+    except IOError:
+        raise HTTPException(status_code=500, detail="Error reading file")
+
+@app.delete("/projects/{project_name}/files/{file_name}")
+async def delete_file(
+    project_name: str,
+    file_name: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Delete a specific file from a project.
+    """
+    project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
+    if not os.path.exists(project_dir):
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    main_file = os.path.join(project_dir, "main", file_name)
+    temp_file = os.path.join(project_dir, "temp", file_name)
+    
+    if os.path.exists(main_file):
+        os.remove(main_file)
+        return {"message": f"File '{file_name}' deleted from main folder"}
+    elif os.path.exists(temp_file):
+        os.remove(temp_file)
+        return {"message": f"File '{file_name}' deleted from temp folder"}
+    else:
+        raise HTTPException(status_code=404, detail="File not found")
+
+@app.post("/projects/{project_name}/llm")
+async def send_message_to_llm(
+    project_name: str,
+    message: str = Body(..., embed=True),
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """
+    Send a message to the LLM and get a response.
+    """
+    try:
+        genai.configure(api_key=current_user.gemini_api_key)
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content(message)
+        return {"response": response.text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error communicating with LLM: {str(e)}")
+
+@app.post("/projects/{project_name}/files/{file_name}/move")
+async def move_file(
+    project_name: str,
+    file_name: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Move a file from the temp folder to the main folder.
+    """
+    project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
+    if not os.path.exists(project_dir):
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    temp_file = os.path.join(project_dir, "temp", file_name)
+    main_file = os.path.join(project_dir, "main", file_name)
+    
+    if not os.path.exists(temp_file):
+        raise HTTPException(status_code=404, detail="File not found in temp folder")
+    
+    try:
+        shutil.move(temp_file, main_file)
+        return {"message": f"File '{file_name}' moved from temp to main folder"}
+    except IOError:
+        raise HTTPException(status_code=500, detail="Error moving file")
+
+
 
 if __name__ == "__main__":
     import uvicorn

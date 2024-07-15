@@ -254,3 +254,61 @@ async def create_project(token: str, project_name: str) -> Dict[str, Any]:
         logger.error(f"Error creating project: {str(e)}")
         raise APIError(f"Failed to create project: {str(e)}")
 
+@api_call_with_error_handling
+async def validate_token(token: str) -> bool:
+    try:
+        response = await make_api_request('GET', 'users/me', token)
+        return isinstance(response, dict) and "username" in response
+    except AuthenticationError:
+        return False
+    except APIError:
+        return False
+
+@api_call_with_error_handling
+async def get_file_content(token: str, project_name: str, file_name: str) -> str:
+    try:
+        response = await make_api_request('GET', f'projects/{project_name}/files/{file_name}', token)
+        if isinstance(response, dict) and "content" in response:
+            return response["content"]
+        else:
+            raise APIError("Unexpected response format from get_file_content API")
+    except Exception as e:
+        logger.error(f"Error getting file content: {str(e)}")
+        raise APIError(f"Failed to get file content: {str(e)}")
+    
+@api_call_with_error_handling
+async def delete_file(token: str, project_name: str, file_name: str) -> Dict[str, str]:
+    try:
+        response = await make_api_request('DELETE', f'projects/{project_name}/files/{file_name}', token)
+        if isinstance(response, dict) and "message" in response:
+            return response
+        else:
+            raise APIError("Unexpected response format from delete_file API")
+    except Exception as e:
+        logger.error(f"Error deleting file: {str(e)}")
+        raise APIError(f"Failed to delete file: {str(e)}")
+
+@api_call_with_error_handling
+async def send_message_to_llm(token: str, project_name: str, message: str) -> str:
+    try:
+        data = {"message": message}
+        response = await make_api_request('POST', f'projects/{project_name}/llm', token, json=data)
+        if isinstance(response, dict) and "response" in response:
+            return response["response"]
+        else:
+            raise APIError("Unexpected response format from send_message_to_llm API")
+    except Exception as e:
+        logger.error(f"Error sending message to LLM: {str(e)}")
+        raise APIError(f"Failed to send message to LLM: {str(e)}")
+
+@api_call_with_error_handling
+async def move_file(token: str, project_name: str, file_name: str) -> Dict[str, str]:
+    try:
+        response = await make_api_request('POST', f'projects/{project_name}/files/{file_name}/move', token)
+        if isinstance(response, dict) and "message" in response:
+            return response
+        else:
+            raise APIError("Unexpected response format from move_file API")
+    except Exception as e:
+        logger.error(f"Error moving file: {str(e)}")
+        raise APIError(f"Failed to move file: {str(e)}")

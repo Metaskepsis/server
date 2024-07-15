@@ -1,15 +1,7 @@
 import gradio as gr
 from gradio_handlers import *
+from state_config import State, SERVER_HOST, SERVER_PORT, LOGIN_TAB, PROJECT_TAB, LLM_TAB, CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT
 import logging
-from typing import Dict, Tuple
-from config import SERVER_HOST, SERVER_PORT
-
-# Constants
-LOGIN_TAB = "Login/Register"
-PROJECT_TAB = "Project Management"
-LLM_TAB = "LLM Interface"
-CREATE_NEW_PROJECT = "Create New Project"
-CHOOSE_EXISTING_PROJECT = "Choose Existing Project"
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +28,6 @@ def create_login_tab() -> Dict:
             register_button = gr.Button("Register")
 
         message_box = gr.Textbox(label="Message", interactive=False)
-        login_message = gr.Textbox(label="Login Message", interactive=False)
 
     login_radio.change(
         lambda choice: (
@@ -53,7 +44,6 @@ def create_login_tab() -> Dict:
         'new_api_key': new_api_key_login,
         'login_button': login_button,
         'message': message_box,
-        'login_message': login_message,
         'register_button': register_button,
         'username_register': username_register,
         'password_register': password_register,
@@ -123,34 +113,34 @@ def create_llm_tab() -> Dict:
         'send_button': send_button,
     }
 
-
 def create_interface():
     with gr.Blocks() as interface:
-        state = gr.State({"token": "", "username": "", "project": ""})
+        state = gr.State(State().to_json())
 
         with gr.Tabs() as tabs:
             with gr.Tab(LOGIN_TAB, id="login") as login_tab:
-                login_components = create_login_tab()
+                with gr.Column(visible=True) as login_content:
+                    login_components = create_login_tab()
 
-            with gr.Tab(PROJECT_TAB, id="project", visible=False) as project_tab:
-                project_components = create_project_tab()
+            with gr.Tab(PROJECT_TAB, id="project") as project_tab:
+                with gr.Column(visible=False) as project_content:
+                    project_components = create_project_tab()
 
-            with gr.Tab(LLM_TAB, id="llm", visible=False) as llm_tab:
-                llm_components = create_llm_tab()
+            with gr.Tab(LLM_TAB, id="llm") as llm_tab:
+                with gr.Column(visible=False) as llm_content:
+                    llm_components = create_llm_tab()
 
         # Set up event handlers
         login_components['login_button'].click(
             handle_login,
-            inputs=[login_components['username'], login_components['password'], login_components['new_api_key']],
+            inputs=[login_components['username'], login_components['password'], login_components['new_api_key'], state],
             outputs=[
-                state,  # token
-                state,  # username
-                login_tab,  # visibility
-                project_tab,  # visibility
-                llm_tab,  # visibility
-                login_components['login_message'],  # Add this line
+                state,
+                login_content,
+                project_content,
+                llm_content,
+                login_components['message'],
                 project_components['project_dropdown'],
-                state,  # current project
                 llm_components['project_name'],
                 llm_components['main_files_output'],
                 llm_components['temp_files_output'],
@@ -175,8 +165,8 @@ def create_interface():
             inputs=[state, project_components['selected_project']],
             outputs=[
                 project_components['message'],
-                project_tab,
-                llm_tab,
+                project_content,
+                llm_content,
                 state,
                 llm_components['project_name'],
                 llm_components['main_files_output'],
@@ -210,32 +200,26 @@ def create_interface():
 
         llm_components['send_button'].click(
             send_message,
-            inputs=[llm_components['message_input'], llm_components['chat_history']],
+            inputs=[llm_components['message_input'], llm_components['chat_history'], state],
             outputs=[llm_components['chat_history'], llm_components['message_input']]
         )
 
         llm_components['create_new_project_button'].click(
             switch_to_project_tab,
-            outputs=[tabs, project_tab, llm_tab]
+            outputs=[tabs, project_content, llm_content]
         )
 
-        # Update project lists when tabs are selected or project state changes
-        for trigger in [project_tab.select, llm_tab.select, state.change]:
-            trigger(
-                update_project_lists,
-                inputs=[state],
-                outputs=[project_components['project_dropdown'], llm_components['project_selector']]
-            )
+        # Periodically update project lists
+        interface.load(
+            update_project_lists,
+            inputs=[state],
+            outputs=[project_components['project_dropdown'], llm_components['project_selector']],
+            every=5  # Update every 5 seconds
+        )
 
-        async def update_llm_tab(state):
-            token = state['token']
-            project = state['project']
-            projects = await update_project_lists(token)
-            main_files, temp_files = await update_file_lists(token, project)
-            return projects, main_files, temp_files
-
+        # Update LLM tab when selected
         llm_tab.select(
-            update_llm_tab,
+            lambda state: update_project_lists(State.from_json(state)),
             inputs=[state],
             outputs=[
                 llm_components['project_selector'],
@@ -247,9 +231,9 @@ def create_interface():
         # Add token validation when switching to project or LLM tabs
         for tab in [project_tab, llm_tab]:
             tab.select(
-                check_and_update_token,
+                lambda state: check_and_update_token(State.from_json(state)),
                 inputs=[state],
-                outputs=[state, login_tab, project_tab, llm_tab]
+                outputs=[state, login_content, project_content, llm_content]
             )
 
     return interface
