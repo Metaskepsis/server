@@ -1,10 +1,10 @@
 import gradio as gr
-from gradio_state_config import State, LOGIN_TAB, PROJECT_TAB, LLM_TAB, CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT, MAX_UPLOAD_SIZE, ALLOWED_FILE_TYPES
+from gradio_state_config import *
 import gradio_calls as api
 import logging
 from typing import Dict, List, Tuple
 import json
-import os
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,6 +48,32 @@ async def handle_registration(username: str, password: str, api_key: str) -> str
     else:
         return f"Registration failed: {result.error}"
 
+async def create_new_project(state_json: str, new_project_name: str) -> Tuple[str, str, List[str]]:
+    state = State.from_json(state_json)
+    try:
+        create_result = await api.create_project(state.token, new_project_name)
+        
+        # Update the state with the new project
+        state.update(project=new_project_name)
+        
+        message = f"Project '{new_project_name}' created and activated successfully"
+        
+        # Update project list
+        projects = await api.list_projects(state.token)
+        project_names = [p["name"] for p in projects]
+        
+        return message, state.to_json(), project_names
+    except api.APIError as e:
+        if "Project already exists" in str(e):
+            return f"Error: A project named '{new_project_name}' already exists. Please choose a different name.", state.to_json(), []
+        else:
+            logger.error(f"Error in create_new_project: {str(e)}")
+            return f"Error: {str(e)}", state.to_json(), []
+    except Exception as e:
+        logger.error(f"Unexpected error in create_new_project: {str(e)}")
+        return f"An unexpected error occurred: {str(e)}", state.to_json(), []
+
+
 async def project_action_handler(action: str, new_project_name: str, existing_project: str) -> Tuple[str, str]:
     if action == CREATE_NEW_PROJECT:
         if not new_project_name:
@@ -56,25 +82,26 @@ async def project_action_handler(action: str, new_project_name: str, existing_pr
     else:
         return "", existing_project
 
-async def proceed_with_project(state: State, project: str) -> Tuple:
-    if not project:
+
+
+async def proceed_with_project(state_json: str, selected_project: str) -> Tuple[str, bool, bool, str, str, str, str, List[str]]:
+    state = State.from_json(state_json)
+    if not selected_project:
         return "No project selected", True, False, state.to_json(), "", "", "", []
     
+    state.update(project=selected_project)
+    project_visible = True
+    llm_visible = True
     try:
-        state_dict = json.loads(state)
-        token = state_dict.get('token', '')
-        
-        files = await api.list_files(token, project)
+        files = await api.list_files(state.token, selected_project)
         main_files = "\n".join(files.get("main", []))
         temp_files = "\n".join(files.get("temp", []))
-        
-        state_dict['project'] = project
-        new_state = json.dumps(state_dict)
-        
-        return (f"Proceeding with project: {project}", False, True, new_state, f"## Current Project: {project}", main_files, temp_files, files.get("main", []) + files.get("temp", []))
+        all_files = files.get("main", []) + files.get("temp", [])
+        return f"Project '{selected_project}' selected", project_visible, llm_visible, state.to_json(), selected_project, main_files, temp_files, all_files
     except Exception as e:
-        logger.error(f"Error proceeding with project: {str(e)}")
-        return f"Error: {str(e)}", True, False, state, "", "", "", []
+        logger.error(f"Error in proceed_with_project: {str(e)}")
+        return f"Error: {str(e)}", project_visible, llm_visible, state.to_json(), selected_project, "", "", []
+
 
 async def update_project_lists(state_json: str) -> Tuple[List[str], List[str]]:
     try:

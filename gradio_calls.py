@@ -65,7 +65,12 @@ async def make_api_request(method: str, endpoint: str, token: Optional[str] = No
                 if response.status >= 400:
                     error_detail = response_json.get('detail', str(response_json))
                     if response.status == 401:
-                        raise AuthenticationError("Not authenticated")
+                        if "Username does not exist" in error_detail:
+                            raise AuthenticationError("Username does not exist")
+                        elif "Incorrect password" in error_detail:
+                            raise AuthenticationError("Incorrect password")
+                        else:
+                            raise AuthenticationError(error_detail)
                     else:
                         raise APIError(f"HTTP error {response.status}: {error_detail}")
 
@@ -74,8 +79,6 @@ async def make_api_request(method: str, endpoint: str, token: Optional[str] = No
         except aiohttp.ClientError as e:
             logger.error(f"Client error in API request: {str(e)}")
             raise APIError(f"An error occurred: {str(e)}")
-
-
 
 def api_call_with_error_handling(func: Callable) -> Callable:
     @wraps(func)
@@ -126,7 +129,13 @@ async def login_api_call(username: str, password: str, new_api_key: str) -> Tupl
         else:
             return "", "Login failed: Invalid response from server", False, ""
     except AuthenticationError as e:
-        return "", f"Login failed: {str(e)}", False, ""
+        error_message = str(e)
+        if "Username does not exist" in error_message:
+            return "", "Login failed: Username does not exist", False, ""
+        elif "Incorrect password" in error_message:
+            return "", "Login failed: Incorrect password", False, ""
+        else:
+            return "", f"Login failed: {error_message}", False, ""
     except APIError as e:
         return "", f"Login failed: {str(e)}", False, ""
 
@@ -230,7 +239,6 @@ async def update_api_key(token: str, new_api_key: str) -> APIResponse:
 
 @api_call_with_error_handling
 async def list_projects(token: str) -> List[Dict[str, str]]:
-    """Fetch the list of projects with their timestamps for the current user."""
     try:
         return await make_api_request('GET', 'projects', token)
     except AuthenticationError:
@@ -245,11 +253,16 @@ async def create_project(token: str, project_name: str) -> Dict[str, Any]:
     """Create a new project."""
     try:
         data = {"project_name": project_name}
-        response = await make_api_request('POST', 'projects', token, json=data)
+        response = await make_api_request('POST', 'projects', token, json_data=data)
         if isinstance(response, dict) and "message" in response:
             return response
         else:
             raise APIError("Unexpected response format from create_project API")
+    except aiohttp.ClientResponseError as e:
+        if e.status == 409:
+            raise APIError("Project already exists")
+        else:
+            raise APIError(f"Failed to create project: {str(e)}")
     except Exception as e:
         logger.error(f"Error creating project: {str(e)}")
         raise APIError(f"Failed to create project: {str(e)}")

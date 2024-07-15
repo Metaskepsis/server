@@ -162,7 +162,7 @@ async def create_project(project: ProjectCreate, current_user: User = Depends(ge
     
     project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
     if os.path.exists(project_dir):
-        raise HTTPException(status_code=400, detail="Project already exists")
+        raise HTTPException(status_code=409, detail="Project already exists")
     
     try:
         # Create main project directory
