@@ -9,6 +9,9 @@ import os
 import markdown
 import tempfile
 import base64
+from PIL import Image
+import io
+import html
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -67,16 +70,21 @@ async def handle_create_empty_project(new_project_name: str, state_json: str) ->
         state = State.from_json(state_json)
         create_result = await api.create_project(state.token, new_project_name)
         
-        if not create_result.get('success', False):
-            error_message = create_result.get('message', 'Unknown error occurred')
-            return f"Failed to create project: {error_message}", state_json, gr.update(), gr.update()
-        
-        # Fetch the updated list of projects
-        projects = await api.list_projects(state.token)
-        project_names = [p["name"] for p in projects]
-        
-        message = f"Project '{new_project_name}' created successfully. Please select it from the dropdown and click Proceed."
-        return message, state.to_json(), gr.update(choices=project_names, value=new_project_name), gr.update(choices=project_names, value=new_project_name)
+        if "message" in create_result:
+            # Project created successfully
+            message = create_result["message"]
+            
+            # Fetch the updated list of projects
+            projects = await api.list_projects(state.token)
+            project_names = [p["name"] for p in projects]
+            
+            return message, state.to_json(), gr.update(choices=project_names, value=new_project_name), gr.update(choices=project_names, value=new_project_name)
+        else:
+            # Unexpected response format
+            return f"Unexpected response when creating project", state_json, gr.update(), gr.update()
+    except api.APIError as e:
+        logger.error(f"Error in handle_create_new_project: {str(e)}")
+        return f"Error: {str(e)}", state_json, gr.update(), gr.update()
     except json.JSONDecodeError:
         logger.error(f"Invalid state JSON: {state_json}")
         return "Error: Invalid state", state_json, gr.update(), gr.update()
@@ -115,22 +123,37 @@ def handle_proceed_button(state_json: str) -> Tuple[gr.update, gr.update, gr.upd
 
     
 def handle_file_selection(file_path: str, state_json: str) -> Tuple[str, str]:
+    logger.info(f"handle_file_selection called with file_path: {file_path}")
     try:
         state = State.from_json(state_json)
         if not state.token or not state.project:
             return state_json, "No active project or session"
 
-        if file_path is None:
+        if file_path is None or file_path.strip() == "":
             state.selected_file = ""
             return state.to_json(), "No file selected"
 
-        if file_path.startswith("  "):  # It's a file, not a header
-            file_name = file_path.strip()
-            folder = "main" if "Main Files:" in file_path else "temp"
-            state.selected_file = f"{folder}/{file_name}"
-            return state.to_json(), f"Selected file: {state.selected_file}"
+        file_path = file_path.strip()
+        logger.info(f"Stripped file_path: {file_path}")
+        
+        if file_path.startswith("Main Files:"):
+            folder = "main"
+            file_name = file_path[len("Main Files:"):].strip()
+        elif file_path.startswith("Temp Files:"):
+            folder = "temp"
+            file_name = file_path[len("Temp Files:"):].strip()
         else:
-            return state_json, ""  # It's a header, not a file
+            if '/' in file_path:
+                state.selected_file = file_path
+                logger.info(f"File already has a folder, selected_file set to: {state.selected_file}")
+                return state.to_json(), f"Selected file: {state.selected_file}"
+            else:
+                folder = "temp"
+                file_name = file_path
+
+        state.selected_file = f"{folder}/{file_name}"
+        logger.info(f"Final selected_file: {state.selected_file}")
+        return state.to_json(), f"Selected file: {state.selected_file}"
     except Exception as e:
         logger.error(f"Error in handle_file_selection: {str(e)}")
         return state_json, f"Error: {str(e)}"
@@ -183,29 +206,58 @@ async def send_message(message: str, chat_history: List[Dict[str, str]], state: 
         logger.error(f"Error in send_message: {str(e)}")
         return chat_history, f"Error: {str(e)}"
 
-async def visualize_file(file_name: str, state_json: str):
-    logger.info(f"Visualize file called for '{file_name}'")
-    file_name = file_name.strip()
-    state = State.from_json(state_json)
-    if not file_name or not state.project:
-        logger.warning("No file selected or no active project.")
-        return gr.update(value="No file selected or no active project.")
-    
+
+def is_pdf_with_images(content):
+    return content.startswith(b'%PDF') and (b'/XObject' in content or b'/Image' in content)
+
+def is_image(content):
     try:
-        logger.info(f"Attempting to get file content for '{file_name}' in project '{state.project}'")
-        response = await api.get_file_content(state.token, state.project, file_name)
+        Image.open(io.BytesIO(content))
+        return True
+    except IOError:
+        return False
+
+
+async def visualize_file(state_json: str):
+    logger.info("Visualize file called")
+    try:
+        state = State.from_json(state_json)
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding state JSON: {e}")
+        return gr.update(value='<p>Error: Invalid state information. Please try reloading the page.</p>')
+    logger.info(f"State selected_file: '{state.selected_file}'")
+    
+    if not state.selected_file or not state.project:
+        logger.warning("No file selected in state or no active project.")
+        return gr.update(value='<p>No file selected in the current project. Please choose a file to visualize.</p>')
+    try:
+        logger.info(f"Attempting to get file content for '{state.selected_file}' in project '{state.project}'")
+        response = await api.get_file_content(state.token, state.project, state.selected_file)
         logger.info(f"Response received for file: {response['name']}")
         content = response["content"]
-        file_type = response["type"]
+        
+        # Infer file type from content
+        if content.startswith(b'%PDF'):
+            file_type = "application/pdf"
+        elif is_image(content):
+            file_type = "image"
+        else:
+            file_type = "text"
         
         # Wrapper for scrollable content
         scroll_wrapper = '<div style="max-height: 500px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">{}</div>'
         
-        if file_type == "application/pdf":
+        if file_type == "image":
+            logger.info("Preparing image content for display")
+            img_data = base64.b64encode(content).decode('utf-8')
+            img_html = f'<img src="data:image/png;base64,{img_data}" alt="{state.selected_file}" style="max-width:100%; height:auto;">'
+            return gr.update(value=scroll_wrapper.format(img_html))
+        
+        elif file_type == "application/pdf":
             logger.info("Preparing PDF content for display")
             # Create a temporary file to store the PDF
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
-                temp_pdf.write(base64.b64decode(content))
+                temp_pdf.write(content)
                 temp_pdf_path = temp_pdf.name
 
             # Use pdf2image to convert PDF to images
@@ -217,25 +269,32 @@ async def visualize_file(file_name: str, state_json: str):
             for i, image in enumerate(images):
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_img:
                     image.save(temp_img, format='PNG')
-                    pdf_html += f'<img src="file://{temp_img.name}" style="width:100%; margin-bottom:10px;">'
+                    img_data = base64.b64encode(open(temp_img.name, 'rb').read()).decode('utf-8')
+                    pdf_html += f'<img src="data:image/png;base64,{img_data}" style="width:100%; margin-bottom:10px;">'
+                os.unlink(temp_img.name)  # Remove temporary image file
 
             os.unlink(temp_pdf_path)  # Remove temporary PDF file
+
+            if is_pdf_with_images(content):
+                pdf_html = f"<p>This PDF contains images.</p>{pdf_html}"
+            else:
+                pdf_html = f"<p>This is a simple PDF without images.</p>{pdf_html}"
 
             return gr.update(value=scroll_wrapper.format(pdf_html))
         else:
             logger.info("Preparing text content for display")
-            file_extension = os.path.splitext(file_name)[1].lower()
+            file_extension = os.path.splitext(state.selected_file)[1].lower()
             if file_extension in ['.md', '.markdown']:
                 # Convert markdown to HTML
-                html_content = markdown.markdown(content)
+                html_content = markdown.markdown(content.decode('utf-8'))
                 return gr.update(value=scroll_wrapper.format(html_content))
             else:
                 # Wrap plain text in pre tag to preserve formatting
-                text_content = f'<pre>{content}</pre>'
+                text_content = f'<pre>{html.escape(content.decode("utf-8"))}</pre>'
                 return gr.update(value=scroll_wrapper.format(text_content))
     except Exception as e:
         logger.error(f"Error visualizing file: {str(e)}")
-        return gr.update(value=f"Error visualizing file: {str(e)}")
+        return gr.update(value=f'<p style="color: red;">Error visualizing file: {str(e)}</p>')
 
 def switch_to_project_tab():
     return (

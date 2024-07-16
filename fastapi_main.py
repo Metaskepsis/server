@@ -12,7 +12,7 @@ import logging
 import google.generativeai as genai
 import urllib.parse
 from fastapi.responses import FileResponse
-import base64
+from fastapi.responses import StreamingResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -186,10 +186,12 @@ async def update_user_api_key(new_api_key: str, current_user: UserInDB = Depends
         return {"message": "Current API key is valid"}
     
 @app.post("/projects")
-async def create_project(project_name: str, current_user: User = Depends(get_current_active_user)):
+async def create_project(project: ProjectCreate, current_user: User = Depends(get_current_active_user)):
     """
     Create a new project for the current user with 'main' and 'temp' folders.
     """
+    project_name = project.project_name
+    
     # Validate project name
     if not re.match(r'^[a-zA-Z0-9_-]+$', project_name):
         raise HTTPException(status_code=400, detail="Invalid project name. Use only letters, numbers, underscores, and hyphens.")
@@ -287,32 +289,28 @@ async def validate_token(current_user: User = Depends(get_current_active_user)):
     """
     return {"valid": True}
 
-
-import os
-import base64
-from fastapi import HTTPException, Depends
-from typing import Dict
-import urllib.parse
-
 @app.get("/projects/{project_name}/files/{file_name:path}")
 async def get_file_content(
     project_name: str,
     file_name: str,
     current_user: User = Depends(get_current_active_user)
 ):
+    logger.info(f"Received request for file: {file_name} in project: {project_name}")
     project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
+    logger.info(f"Project directory: {project_dir}")
+    
     if not os.path.exists(project_dir):
+        logger.warning(f"Project directory not found: {project_dir}")
         raise HTTPException(status_code=404, detail="Project not found")
     
-    main_file = os.path.join(project_dir, "main", file_name)
-    temp_file = os.path.join(project_dir, "temp", file_name)
+    file_path = os.path.join(project_dir, file_name)
+    logger.info(f"Full file path: {file_path}")
     
-    if os.path.exists(main_file):
-        file_path = main_file
-    elif os.path.exists(temp_file):
-        file_path = temp_file
-    else:
+    if not os.path.exists(file_path):
+        logger.warning(f"File not found: {file_path}")
         raise HTTPException(status_code=404, detail="File not found")
+    
+    logger.info(f"File found, attempting to stream: {file_path}")
     
     return FileResponse(file_path)
 

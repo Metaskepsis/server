@@ -33,52 +33,63 @@ class APIResponse:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def make_api_request(method: str, endpoint: str, token: Optional[str] = None, json_data: Optional[Dict] = None, data: Optional[Dict] = None, files: Optional[Dict] = None):
+async def make_api_request(method: str, endpoint: str, token: Optional[str] = None, json_data: Optional[Dict] = None, data: Optional[Dict] = None, files: Optional[Dict] = None, return_response: bool = False, expect_json: bool = True):
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     url = f"{API_URL}/{endpoint}"
     
-    logger.info(f"Making {method} request to {url} with token: {token[:5] if token else 'None'}...")
+    logger.info(f"Making {method} request to {url}")
 
     async with aiohttp.ClientSession() as session:
         try:
+            # Handle file uploads
             if files:
-                # Handle file uploads
                 form_data = FormData()
                 for key, file_tuple in files.items():
                     form_data.add_field(key, file_tuple[1], filename=file_tuple[0], content_type=file_tuple[2])
                 request_kwargs = {"data": form_data}
             elif json_data:
                 request_kwargs = {"json": json_data}
+                headers["Content-Type"] = "application/json"
             elif data:
                 request_kwargs = {"data": data}
             else:
                 request_kwargs = {}
 
-            async with session.request(method, url, headers=headers, **request_kwargs, timeout=10) as response:
-                try:
-                    response_json = await response.json()
-                except json.JSONDecodeError:
-                    response_text = await response.text()
-                    logger.error(f"Failed to decode JSON from response. Text content: {response_text}")
-                    response_json = {"detail": response_text}
+            async with session.request(method, url, headers=headers, **request_kwargs, timeout=60) as response:
+                logger.info(f"Received response with status {response.status}")
+                
+                if return_response:
+                    return response
+                
+                if expect_json:
+                    try:
+                        response_json = await response.json()
+                        logger.info("Successfully parsed JSON response")
+                        content = response_json
+                    except json.JSONDecodeError:
+                        response_text = await response.text()
+                        logger.error(f"Failed to decode JSON from response. Text content: {response_text}")
+                        content = {"detail": response_text}
+                else:
+                    content = await response.read()
+                    logger.info(f"Read raw content, length: {len(content)} bytes")
 
                 if response.status >= 400:
-                    error_detail = response_json.get('detail', str(response_json))
-                    if response.status == 401:
-                        if "Username does not exist" in error_detail:
-                            raise AuthenticationError("Username does not exist")
-                        elif "Incorrect password" in error_detail:
-                            raise AuthenticationError("Incorrect password")
-                        else:
-                            raise AuthenticationError(error_detail)
-                    else:
-                        raise APIError(f"HTTP error {response.status}: {error_detail}")
+                    error_detail = content.get('detail', str(content)) if isinstance(content, dict) else str(content)
+                    logger.error(f"HTTP error {response.status}: {error_detail}")
+                    raise APIError(f"HTTP error {response.status}: {error_detail}")
 
-                return response_json
+                return content
 
         except aiohttp.ClientError as e:
             logger.error(f"Client error in API request: {str(e)}")
             raise APIError(f"An error occurred: {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error("Request timed out")
+            raise APIError("Request timed out")
+        except Exception as e:
+            logger.error(f"Unexpected error in API request: {str(e)}")
+            raise APIError(f"An unexpected error occurred: {str(e)}")
 
 def api_call_with_error_handling(func: Callable) -> Callable:
     @wraps(func)
@@ -189,13 +200,7 @@ async def list_files(token: str, project_name: str) -> Dict[str, List[str]]:
         logger.error(f"Error listing files for project '{project_name}': {str(e)}")
         raise
 
-import os
-import mimetypes
-import logging
-from typing import Dict
-import urllib.parse
 
-logger = logging.getLogger(__name__)
 
 @api_call_with_error_handling
 async def upload_file(token: str, project_name: str, file_path: str) -> Dict[str, str]:
@@ -262,14 +267,10 @@ async def list_projects(token: str) -> List[Dict[str, str]]:
 
 @api_call_with_error_handling
 async def create_project(token: str, project_name: str) -> Dict[str, Any]:
-    """Create a new project."""
     try:
         data = {"project_name": project_name}
         response = await make_api_request('POST', 'projects', token, json_data=data)
-        if isinstance(response, dict) and "message" in response:
-            return response
-        else:
-            raise APIError("Unexpected response format from create_project API")
+        return response  # Return the entire response
     except aiohttp.ClientResponseError as e:
         if e.status == 409:
             raise APIError("Project already exists")
@@ -289,18 +290,21 @@ async def validate_token(token: str) -> bool:
     except APIError:
         return False
 
+
 @api_call_with_error_handling
-async def get_file_content(token: str, project_name: str, file_name: str) -> Dict[str, str]:
+async def get_file_content(token: str, project_name: str, file_name: str) -> Dict[str, Any]:
     try:
-        encoded_file_name = urllib.parse.quote(file_name)
-        response = await make_api_request('GET', f'projects/{project_name}/files/{encoded_file_name}', token)
-        if isinstance(response, dict) and "content" in response and "type" in response and "name" in response:
-            return response
-        else:
-            raise APIError("Unexpected response format from get_file_content API")
+        logger.info(f"Attempting to get file content for project: {project_name}, file: {file_name}")
+        content = await make_api_request('GET', f'projects/{project_name}/files/{file_name}', token, expect_json=False)
+        logger.info(f"Successfully received file content, length: {len(content)} bytes")
+        return {
+            "name": file_name,
+            "content": content
+        }
     except Exception as e:
-        logger.error(f"Error getting file content: {str(e)}")
+        logger.error(f"Error in get_file_content: {str(e)}")
         raise APIError(f"Failed to get file content: {str(e)}")
+
     
 @api_call_with_error_handling
 async def delete_file(token: str, project_name: str, file_name: str) -> Dict[str, str]:

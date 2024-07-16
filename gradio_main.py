@@ -97,28 +97,69 @@ def create_project_tab() -> Dict:
 
 
 def create_llm_tab() -> Dict:
-    with gr.Column() as LLM_Interface:
-        project_name = gr.Markdown("## Current Project: None")
+    custom_css = """
+    #llm_interface {
+        height: calc(100vh - 100px);
+        overflow: hidden;
+    }
+    #llm_interface > .gr-row {
+        height: 100%;
+    }
+    .llm-column {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    .llm-column > div {
+        flex: 1;
+        overflow-y: auto;
+    }
+    .file-content {
+        max-height: calc(50% - 20px);
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        padding: 10px;
+        margin-bottom: 10px;
+    }
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+    }
+    .chat-history {
+        flex-grow: 1;
+        overflow-y: auto;
+    }
+    .input-container {
+        margin-top: 10px;
+    }
+    """
+
+    with gr.Blocks(css=custom_css) as LLM_Interface:
+        gr.Markdown("## LLM Interface", elem_id="llm-title")
         
-        # Create a container for the horizontally scrollable content
-        with gr.Row() as row:
-            with gr.Column(scale=1, min_width=300):
+        with gr.Row(equal_height=True, elem_id="llm_interface"):
+            with gr.Column(scale=1, min_width=300, elem_classes="llm-column"):
+                project_name = gr.Markdown("## Current Project: None")
                 file_selector = gr.Dropdown(label="Select File", choices=[])
                 file_upload = gr.File(label="Upload File")
                 upload_button = gr.Button("Upload")
-                message = gr.Textbox(label=" Message", interactive=False)
+                message = gr.Textbox(label="Message", interactive=False)
                 project_selector = gr.Dropdown(label="Select Project", choices=[], allow_custom_value=True, interactive=True)
                 create_new_project_button = gr.Button("➕ Create New Project")
-            with gr.Column(scale=1, min_width=300):
-                chat_history = gr.Chatbot(label="Chat History")
-                reply_to_metaskepsis = gr.Textbox(label="Your input", placeholder="Reply to metaskepsis here")
-                send_button = gr.Button("Send")
-                
-            with gr.Column(scale=1, min_width=300):
-                file_content1 = gr.HTML(label="File Content")
+
+            with gr.Column(scale=2, min_width=400, elem_classes="llm-column chat-container"):
+                chat_history = gr.Chatbot(label="Chat History", elem_classes="chat-history")
+                with gr.Row(elem_classes="input-container"):
+                    reply_to_metaskepsis = gr.Textbox(label="Your input", placeholder="Reply to metaskepsis here")
+                    send_button = gr.Button("Send")
+
+            with gr.Column(scale=1, min_width=300, elem_classes="llm-column"):
+                file_content1 = gr.HTML(label="File Content 1", elem_classes="file-content")
                 visualize_button1 = gr.Button("Visualize Selected File")
-                file_content2 = gr.HTML(label="File Content")
+                file_content2 = gr.HTML(label="File Content 2", elem_classes="file-content")
                 visualize_button2 = gr.Button("Visualize Selected File")
+
     return {
         'project_name': project_name,
         'project_selector': project_selector,
@@ -133,7 +174,8 @@ def create_llm_tab() -> Dict:
         'visualize_button2': visualize_button2,
         'chat_history': chat_history,
         'reply_to_metaskepsis': reply_to_metaskepsis,
-        'send_button': send_button}
+        'send_button': send_button
+    }
 def create_interface():
     with gr.Blocks() as interface:
         state = gr.State(State().to_json())
@@ -279,16 +321,17 @@ def create_interface():
             outputs=[login_tab,project_tab,llm_tab])
         
         llm_components['visualize_button1'].click(
-    visualize_file,
-    inputs=[llm_components['file_selector'], state],
-    outputs=[llm_components['file_content1']])
+        visualize_file,
+        inputs=[state],
+        outputs=[llm_components['file_content1']]
+    )
 
         llm_components['visualize_button2'].click(
-    visualize_file, 
-    inputs=[llm_components['file_selector'], state],
-    outputs=[llm_components['file_content2']])
-
-    return interface
+        visualize_file, 
+        inputs=[state],
+        outputs=[llm_components['file_content2']]
+    )
+        return interface
 
 if __name__ == "__main__":
     interface = create_interface()
