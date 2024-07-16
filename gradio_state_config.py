@@ -3,6 +3,7 @@ from dataclasses import dataclass, asdict
 import json
 from typing import List, Optional
 
+
 # Server configuration
 SERVER_HOST = "127.0.0.1"  # or "0.0.0.0" if you want to make it accessible from other machines
 SERVER_PORT = 7860  # or any other port you prefer
@@ -37,11 +38,15 @@ class State:
     token: str = ""
     username: str = ""
     project: str = ""
-    chat_history: List[dict] = None
+    selected_file: str = ""
+    chat_history: List[dict] =  None
+    project_creation_chat_history: List[dict] = None
     
     def __post_init__(self):
         if self.chat_history is None:
             self.chat_history = []
+        if self.project_creation_chat_history is None:
+            self.project_creation_chat_history = []
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -60,12 +65,19 @@ class State:
         self.token = ""
         self.username = ""
         self.project = ""
+        self.selected_file = ""
         self.chat_history = []
+        self.project_creation_chat_history = []
 
-    def add_chat_message(self, role: str, content: str) -> None:
-        self.chat_history.append({"role": role, "content": content})
-        if len(self.chat_history) > MAX_CHAT_HISTORY:
-            self.chat_history.pop(0)
+    def add_chat_message(self, role: str, content: str, is_project_creation: bool = False) -> None:
+        if is_project_creation:
+            self.project_creation_chat_history.append({"role": role, "content": content})
+            if len(self.project_creation_chat_history) > MAX_CHAT_HISTORY:
+                self.project_creation_chat_history.pop(0)
+        else:
+            self.chat_history.append({"role": role, "content": content})
+            if len(self.chat_history) > MAX_CHAT_HISTORY:
+                self.chat_history.pop(0)
 
 def get_env_variable(name: str, default: Optional[str] = None) -> str:
     """Retrieve an environment variable or return a default value."""

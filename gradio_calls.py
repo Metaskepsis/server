@@ -290,11 +290,12 @@ async def validate_token(token: str) -> bool:
         return False
 
 @api_call_with_error_handling
-async def get_file_content(token: str, project_name: str, file_name: str) -> str:
+async def get_file_content(token: str, project_name: str, file_name: str) -> Dict[str, str]:
     try:
-        response = await make_api_request('GET', f'projects/{project_name}/files/{file_name}', token)
-        if isinstance(response, dict) and "content" in response:
-            return response["content"]
+        encoded_file_name = urllib.parse.quote(file_name)
+        response = await make_api_request('GET', f'projects/{project_name}/files/{encoded_file_name}', token)
+        if isinstance(response, dict) and "content" in response and "type" in response and "name" in response:
+            return response
         else:
             raise APIError("Unexpected response format from get_file_content API")
     except Exception as e:

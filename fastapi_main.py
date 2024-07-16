@@ -10,6 +10,9 @@ from datetime import timedelta, datetime
 from fastapi_auth import *
 import logging
 import google.generativeai as genai
+import urllib.parse
+from fastapi.responses import FileResponse
+import base64
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,6 +22,7 @@ app = FastAPI(
     description="API for user management, project creation, and file uploads",
     version="1.0.0"
 )
+
 
 class ProjectCreate(BaseModel):
     project_name: str
@@ -149,43 +153,6 @@ async def register_new_user(user: UserCreate):
             detail=f"Error during registration: {str(e)}"
         )
 
-@app.post("/projects")
-async def create_project(project: ProjectCreate, current_user: User = Depends(get_current_active_user)):
-    """
-    Create a new project for the current user with 'main' and 'temp' folders.
-    """
-    project_name = project.project_name
-
-    # Validate project name
-    if not re.match(r'^[a-zA-Z0-9_-]+$', project_name):
-        raise HTTPException(status_code=400, detail="Invalid project name. Use only letters, numbers, underscores, and hyphens.")
-    
-    project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
-    if os.path.exists(project_dir):
-        raise HTTPException(status_code=409, detail="Project already exists")
-    
-    try:
-        # Create main project directory
-        os.makedirs(project_dir)
-        
-        # Create 'main' and 'temp' subdirectories
-        os.makedirs(os.path.join(project_dir, "main"))
-        os.makedirs(os.path.join(project_dir, "temp"))
-        
-        # Create project info file with timestamp
-        project_info = {
-            "name": project_name,
-            "created_at": datetime.now().isoformat()
-        }
-        with open(os.path.join(project_dir, "project_info.json"), "w") as f:
-            json.dump(project_info, f)
-        
-        return {"message": f"Project '{project_name}' created successfully with 'main' and 'temp' folders", "created_at": project_info["created_at"]}
-    except Exception as e:
-        # If an error occurs, remove the partially created project directory
-        shutil.rmtree(project_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Failed to create project: {str(e)}")
-
 @app.get("/users/me/", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     """
@@ -296,9 +263,6 @@ async def upload_file(
     file: UploadFile = File(...), 
     current_user: User = Depends(get_current_active_user)
 ):
-    """
-    Upload a file to a specific project's temp folder for the current user.
-    """
     project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
     if not os.path.exists(project_dir):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -306,11 +270,13 @@ async def upload_file(
     temp_dir = os.path.join(project_dir, "temp")
     os.makedirs(temp_dir, exist_ok=True)
     
-    file_location = os.path.join(temp_dir, file.filename)
+    # Decode the file name
+    decoded_filename = urllib.parse.unquote(file.filename)
+    file_location = os.path.join(temp_dir, decoded_filename)
     try:
         with open(file_location, "wb+") as file_object:
             shutil.copyfileobj(file.file, file_object)
-        return {"message": f"File '{file.filename}' uploaded to project '{project_name}' temp folder"}
+        return {"message": f"File '{decoded_filename}' uploaded to project '{project_name}' temp folder"}
     except IOError:
         raise HTTPException(status_code=500, detail="Error uploading file")
 
@@ -321,15 +287,19 @@ async def validate_token(current_user: User = Depends(get_current_active_user)):
     """
     return {"valid": True}
 
-@app.get("/projects/{project_name}/files/{file_name}")
+
+import os
+import base64
+from fastapi import HTTPException, Depends
+from typing import Dict
+import urllib.parse
+
+@app.get("/projects/{project_name}/files/{file_name:path}")
 async def get_file_content(
     project_name: str,
     file_name: str,
     current_user: User = Depends(get_current_active_user)
 ):
-    """
-    Get the content of a specific file in a project.
-    """
     project_dir = os.path.join(USERS_DIRECTORY, current_user.username, "projects", project_name)
     if not os.path.exists(project_dir):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -344,12 +314,7 @@ async def get_file_content(
     else:
         raise HTTPException(status_code=404, detail="File not found")
     
-    try:
-        with open(file_path, "r") as file:
-            content = file.read()
-        return {"content": content}
-    except IOError:
-        raise HTTPException(status_code=500, detail="Error reading file")
+    return FileResponse(file_path)
 
 @app.delete("/projects/{project_name}/files/{file_name}")
 async def delete_file(

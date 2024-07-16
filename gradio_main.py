@@ -61,11 +61,10 @@ def create_project_tab() -> Dict:
             with gr.Row():
                 upload_file_button = gr.Button("Upload a file")
                 create_empty_project_button = gr.Button("Create empty project")
-                chat_with_bot_button = gr.Button("Answer some questions")
+                create_project_by_inquiry_button = gr.Button("Answer some questions")
             file_upload = gr.File(label="Upload File", visible=False)
-            upload_message = gr.Textbox(label="Upload Message", interactive=False, visible=False)
+
             
-            # New chat interface components
             chat_interface = gr.Column(visible=False)
             with chat_interface:
                 chat_history = gr.Chatbot(label="Chat History")
@@ -74,7 +73,7 @@ def create_project_tab() -> Dict:
 
         with gr.Column(visible=False) as existing_project_column:
             project_dropdown = gr.Dropdown(label="Select Existing Project", choices=[])
-            proceed_button = gr.Button("Proceed")
+            proceed_button = gr.Button("Proceed", visible=True)
 
         message = gr.Textbox(label="Message", interactive=False)
 
@@ -83,10 +82,9 @@ def create_project_tab() -> Dict:
         "new_project_name": new_project_name,
         "upload_file_button": upload_file_button,
         "create_empty_project_button": create_empty_project_button,
-        "chat_with_bot_button": chat_with_bot_button,
+        "create_project_by_inquiry_button": create_project_by_inquiry_button,
         "file_upload": file_upload,
-        "upload_message": upload_message,
-        "project_dropdown": project_dropdown,
+        "project_dropdown": project_dropdown, 
         "proceed_button": proceed_button,
         "message": message,
         "new_project_column": new_project_column,
@@ -102,41 +100,40 @@ def create_llm_tab() -> Dict:
     with gr.Column() as LLM_Interface:
         project_name = gr.Markdown("## Current Project: None")
         
-        with gr.Row():
-            with gr.Column(scale=1):
-                project_selector = gr.Dropdown(label="Select Project", choices=[])
-                create_new_project_button = gr.Button("➕ Create New Project")
+        # Create a container for the horizontally scrollable content
+        with gr.Row() as row:
+            with gr.Column(scale=1, min_width=300):
+                file_selector = gr.Dropdown(label="Select File", choices=[])
                 file_upload = gr.File(label="Upload File")
                 upload_button = gr.Button("Upload")
-                upload_message = gr.Textbox(label="Upload Message", interactive=False)
-                main_files_output = temp_files_output = gr.Dataframe(headers=["Main Files"],row_count=(5, "dynamic"),col_count=(1, "fixed"),interactive=False,wrap=True)
-                temp_files_output = temp_files_output = gr.Dataframe(headers=["Temp Files"],row_count=(5, "dynamic"),col_count=(1, "fixed"),interactive=False,wrap=True)
-                file_selector = gr.Dropdown(label="Select File", choices=[])
-                
-            with gr.Column(scale=2):
+                message = gr.Textbox(label=" Message", interactive=False)
+                project_selector = gr.Dropdown(label="Select Project", choices=[], allow_custom_value=True, interactive=True)
+                create_new_project_button = gr.Button("➕ Create New Project")
+            with gr.Column(scale=1, min_width=300):
                 chat_history = gr.Chatbot(label="Chat History")
-                message_input = gr.Textbox(label="Message", placeholder="Type your message here...")
+                reply_to_metaskepsis = gr.Textbox(label="Your input", placeholder="Reply to metaskepsis here")
                 send_button = gr.Button("Send")
                 
-            with gr.Column(scale=1):
-                file_content = gr.Textbox(label="File Content", interactive=False)
-
+            with gr.Column(scale=1, min_width=300):
+                file_content1 = gr.HTML(label="File Content")
+                visualize_button1 = gr.Button("Visualize Selected File")
+                file_content2 = gr.HTML(label="File Content")
+                visualize_button2 = gr.Button("Visualize Selected File")
     return {
         'project_name': project_name,
         'project_selector': project_selector,
         'create_new_project_button': create_new_project_button,
         'file_upload': file_upload,
         'upload_button': upload_button,
-        'upload_message': upload_message,
-        'main_files_output': main_files_output,
-        'temp_files_output': temp_files_output,
+        'message': message,
         'file_selector': file_selector,
-        'file_content': file_content,
+        'file_content1': file_content1,
+        'file_content2': file_content2,
+        'visualize_button1': visualize_button1,
+        'visualize_button2': visualize_button2,
         'chat_history': chat_history,
-        'message_input': message_input,
-        'send_button': send_button,
-    }
-
+        'reply_to_metaskepsis': reply_to_metaskepsis,
+        'send_button': send_button}
 def create_interface():
     with gr.Blocks() as interface:
         state = gr.State(State().to_json())
@@ -171,9 +168,8 @@ def create_interface():
                 login_components['message'],
                 project_components['project_dropdown'],
                 llm_components['project_name'],
-                llm_components['main_files_output'],
-                llm_components['temp_files_output'],
-                llm_components['file_selector']
+                llm_components['file_selector'],
+                llm_components['project_selector']  # Add this line
             ]
         )
 
@@ -183,10 +179,21 @@ def create_interface():
             outputs=[login_components['message']]
         )
 
+        project_components['project_action'].change(
+            fn=lambda choice: (
+                gr.update(visible=choice==CREATE_NEW_PROJECT),
+                gr.update(visible=choice==CHOOSE_EXISTING_PROJECT)
+            ),
+            inputs=[project_components['project_action']],
+            outputs=[
+                project_components['new_project_column'],
+                project_components['existing_project_column']
+            ]
+        )
         project_components['upload_file_button'].click(
             handle_upload_file_button,
             inputs=[state],
-            outputs=[project_components['file_upload'], project_components['upload_message']]
+            outputs=[project_components['file_upload'], project_components['message']]
         )
 
         project_components['create_empty_project_button'].click(
@@ -195,7 +202,7 @@ def create_interface():
             outputs=[project_components['message'], state, project_components['project_dropdown'], llm_components['project_selector']]
         )
 
-        project_components['create_project_by_inquiry'].click(
+        project_components['create_project_by_inquiry_button'].click(
             handle_answer_questions,
             inputs=[project_components['new_project_name'], state],
             outputs=[project_components['message'], state, project_components['chat_interface'], project_components['chat_history']]
@@ -207,26 +214,28 @@ def create_interface():
             outputs=[project_components['chat_history'], project_components['message_input'], state]
         )
 
+
+        project_components['project_dropdown'].change(
+        handle_project_selection,
+        inputs=[project_components['project_dropdown'], state],
+        outputs=[
+            project_components['message'],
+            state,
+            project_components['project_dropdown']
+        ]
+    )
+
         project_components['proceed_button'].click(
-            handle_project_selection,
-            inputs=[
-                project_components['project_action'],
-                project_components['new_project_name'],
-                project_components['project_dropdown'],
-                state
-            ],
+            handle_proceed_button,
+            inputs=[state],
             outputs=[
-                project_components['message'],
-                state,
-                project_components['project_dropdown'],
-                llm_components['project_selector'],
-                gr.Checkbox(visible=False)  # This is a temporary checkbox to hold the boolean value
+                login_tab, 
+                project_tab, 
+                llm_tab,
+                project_components['message']
             ]
-        ).then(
-            conditional_tab_switch,
-            inputs=[gr.Checkbox(visible=False)],  # This corresponds to the temporary checkbox
-            outputs=[login_tab, project_tab, llm_tab]
         )
+
 
         llm_components['project_selector'].change(
             update_project_selection,
@@ -234,50 +243,50 @@ def create_interface():
             outputs=[
                 llm_components['project_name'],
                 state,
-                llm_components['main_files_output'],
-                llm_components['temp_files_output'],
-                llm_components['file_selector']
+                llm_components['file_selector'],
+                llm_components['message'],
+                llm_components['project_selector']
             ]
         )
+
+        llm_components['file_selector'].change(
+        handle_file_selection,
+        inputs=[llm_components['file_selector'], state],
+        outputs=[state, llm_components['message']]
+    )
 
         llm_components['upload_button'].click(
             upload_and_update,
             inputs=[llm_components['file_upload'], state],
             outputs=[
-                llm_components['upload_message'],
-                llm_components['main_files_output'],
-                llm_components['temp_files_output'],
+                llm_components['message'],
+                llm_components['file_upload'],  # Add this line
                 llm_components['file_selector']
             ]
         )
 
         llm_components['send_button'].click(
             send_message,
-            inputs=[llm_components['message_input'], llm_components['chat_history'], state],
+            inputs=[llm_components['reply_to_metaskepsis'], llm_components['chat_history'], state],
             outputs=[
                 llm_components['chat_history'],
-                llm_components['message_input']
+                llm_components['reply_to_metaskepsis'],
             ]
         )
 
         llm_components['create_new_project_button'].click(
             switch_to_project_tab,
-            outputs=[
-                login_tab, 
-                project_tab, 
-                llm_tab, 
-                project_components['project_action'],
-                project_components['new_project_name'],
-                project_components['project_dropdown']
-            ]
-        )
+            outputs=[login_tab,project_tab,llm_tab])
+        
+        llm_components['visualize_button1'].click(
+    visualize_file,
+    inputs=[llm_components['file_selector'], state],
+    outputs=[llm_components['file_content1']])
 
-        tabs.select(
-            update_project_dropdown,
-            inputs=[state],
-            outputs=[project_components['project_dropdown']],
-            js="(index) => index === 1"  # Assuming project tab is index 1
-        )
+        llm_components['visualize_button2'].click(
+    visualize_file, 
+    inputs=[llm_components['file_selector'], state],
+    outputs=[llm_components['file_content2']])
 
     return interface
 
