@@ -54,18 +54,49 @@ def create_login_tab() -> Dict:
 def create_project_tab() -> Dict:
     with gr.Column() as project_tab:
         project_action = gr.Radio([CREATE_NEW_PROJECT, CHOOSE_EXISTING_PROJECT], label="Action", value=CREATE_NEW_PROJECT)
-        new_project_name = gr.Textbox(label="New Project Name", visible=True)
-        project_dropdown = gr.Dropdown(label="Select Existing Project", choices=[], visible=False)
-        proceed_button = gr.Button("Proceed")
+        
+        with gr.Column(visible=True) as new_project_column:
+            new_project_name = gr.Textbox(label="New Project Name", placeholder="Enter project name")
+            gr.Markdown("A new project needs a description, this can be either using a pilot file or by answering some questions.")
+            with gr.Row():
+                upload_file_button = gr.Button("Upload a file")
+                create_empty_project_button = gr.Button("Create empty project")
+                chat_with_bot_button = gr.Button("Answer some questions")
+            file_upload = gr.File(label="Upload File", visible=False)
+            upload_message = gr.Textbox(label="Upload Message", interactive=False, visible=False)
+            
+            # New chat interface components
+            chat_interface = gr.Column(visible=False)
+            with chat_interface:
+                chat_history = gr.Chatbot(label="Chat History")
+                message_input = gr.Textbox(label="Message", placeholder="Type your message here...")
+                send_button = gr.Button("Send")
+
+        with gr.Column(visible=False) as existing_project_column:
+            project_dropdown = gr.Dropdown(label="Select Existing Project", choices=[])
+            proceed_button = gr.Button("Proceed")
+
         message = gr.Textbox(label="Message", interactive=False)
 
     return {
         "project_action": project_action,
         "new_project_name": new_project_name,
+        "upload_file_button": upload_file_button,
+        "create_empty_project_button": create_empty_project_button,
+        "chat_with_bot_button": chat_with_bot_button,
+        "file_upload": file_upload,
+        "upload_message": upload_message,
         "project_dropdown": project_dropdown,
         "proceed_button": proceed_button,
-        "message": message
+        "message": message,
+        "new_project_column": new_project_column,
+        "existing_project_column": existing_project_column,
+        "chat_interface": chat_interface,
+        "chat_history": chat_history,
+        "message_input": message_input,
+        "send_button": send_button
     }
+
 
 def create_llm_tab() -> Dict:
     with gr.Column() as LLM_Interface:
@@ -152,10 +183,28 @@ def create_interface():
             outputs=[login_components['message']]
         )
 
-        project_components['project_action'].change(
-            lambda action: (gr.update(visible=action == CREATE_NEW_PROJECT), gr.update(visible=action != CREATE_NEW_PROJECT)),
-            inputs=[project_components['project_action']],
-            outputs=[project_components['new_project_name'], project_components['project_dropdown']]
+        project_components['upload_file_button'].click(
+            handle_upload_file_button,
+            inputs=[state],
+            outputs=[project_components['file_upload'], project_components['upload_message']]
+        )
+
+        project_components['create_empty_project_button'].click(
+            handle_create_empty_project,
+            inputs=[project_components['new_project_name'], state],
+            outputs=[project_components['message'], state, project_components['project_dropdown'], llm_components['project_selector']]
+        )
+
+        project_components['create_project_by_inquiry'].click(
+            handle_answer_questions,
+            inputs=[project_components['new_project_name'], state],
+            outputs=[project_components['message'], state, project_components['chat_interface'], project_components['chat_history']]
+        )
+
+        project_components['send_button'].click(
+            send_message_project_tab,
+            inputs=[project_components['message_input'], project_components['chat_history'], state],
+            outputs=[project_components['chat_history'], project_components['message_input'], state]
         )
 
         project_components['proceed_button'].click(
@@ -210,6 +259,7 @@ def create_interface():
                 llm_components['message_input']
             ]
         )
+
         llm_components['create_new_project_button'].click(
             switch_to_project_tab,
             outputs=[
@@ -221,6 +271,7 @@ def create_interface():
                 project_components['project_dropdown']
             ]
         )
+
         tabs.select(
             update_project_dropdown,
             inputs=[state],

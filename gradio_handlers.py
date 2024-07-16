@@ -5,10 +5,12 @@ import gradio_calls as api
 import logging
 from typing import Dict, List, Tuple
 import json
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Login Tab Methods
 async def handle_login(username: str, password: str, new_api_key: str, state_json: str) -> Tuple[str, gr.update, gr.update, gr.update, str, gr.update, gr.update, str, str, gr.update]:
     try:
         token, message, success, logged_in_username = await api.login_api_call(username, password, new_api_key)
@@ -48,7 +50,15 @@ async def handle_registration(username: str, password: str, api_key: str) -> str
     else:
         return f"Registration failed: {result.error}"
 
-async def create_new_project(new_project_name: str, state_json: str) -> Tuple[str, str, gr.update, gr.update]:
+# Project Tab Methods
+
+async def handle_upload_file_button(state_json: str):
+    return gr.update(visible=True), gr.update(visible=True)
+
+async def handle_create_empty_project(new_project_name: str, state_json: str) -> Tuple[str, str, gr.update, gr.update]:
+    if not new_project_name:
+        return "Project name cannot be empty", state_json, gr.update(), gr.update()
+
     try:
         state = State.from_json(state_json)
         create_result = await api.create_project(state.token, new_project_name)
@@ -63,17 +73,70 @@ async def create_new_project(new_project_name: str, state_json: str) -> Tuple[st
         logger.error(f"Invalid state JSON: {state_json}")
         return "Error: Invalid state", state_json, gr.update(), gr.update()
     except Exception as e:
-        logger.error(f"Error in create_new_project: {str(e)}")
+        logger.error(f"Error in handle_create_new_project: {str(e)}")
         return f"Error: {str(e)}", state_json, gr.update(), gr.update()
 
-async def project_action_handler(action: str, new_project_name: str, existing_project: str) -> Tuple[str, str]:
-    if action == CREATE_NEW_PROJECT:
-        if not new_project_name:
-            return "Project name cannot be empty", ""
-        return "", new_project_name
-    else:
-        return "", existing_project
+async def handle_answer_questions(new_project_name: str, state_json: str):
+    if not new_project_name:
+        return "Please enter a project name before starting chat", state_json, gr.update(visible=False), []
+    
+    # Just open the chat interface without creating a project
+    return "", state_json, gr.update(visible=True), []
 
+async def send_message_project_tab(message: str, chat_history: List[Dict[str, str]], state_json: str) -> Tuple[List[Dict[str, str]], str, str]:
+    state = State.from_json(state_json)
+    try:
+        state.add_chat_message("user", message)
+        response = await api.send_message_to_llm(state.token, state.project, message)
+        state.add_chat_message("assistant", response)
+        return state.chat_history, "", state.to_json()
+    except Exception as e:
+        logger.error(f"Error in send_message_project_tab: {str(e)}")
+        return chat_history, f"Error: {str(e)}", state_json
+
+async def handle_project_selection(existing_project: str, state_json: str) -> Tuple[str, str, gr.update, gr.update, bool]:
+    try:
+        state = State.from_json(state_json)
+        if not existing_project:
+            return "Please select a project", state_json, gr.update(), gr.update(), False
+        state.update(project=existing_project)
+        return f"Selected project: {existing_project}", state.to_json(), gr.update(), gr.update(value=existing_project), True
+    except json.JSONDecodeError:
+        logger.error(f"Invalid state JSON: {state_json}")
+        return "Error: Invalid state", state_json, gr.update(), gr.update(), False
+    except Exception as e:
+        logger.error(f"Error in handle_project_selection: {str(e)}")
+        return f"Error: {str(e)}", state_json, gr.update(), gr.update(), False
+
+def conditional_tab_switch(switch_to_llm: bool):
+    if switch_to_llm:
+        return gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
+    else:
+        return gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
+
+# LLM Tab Methods
+async def update_project_selection(project_name: str, state_json: str) -> Tuple[gr.update, str, str, str, gr.update]:
+    try:
+        state = State.from_json(state_json)
+        if not state.token:
+            logger.warning("No token found in state during project selection")
+            return gr.update(value=""), state_json, "", "", gr.update(choices=[])
+        
+        state.update(project=project_name)
+        
+        files = await api.list_files(state.token, project_name)
+        
+        main_files = "\n".join(files.get("main", []))
+        temp_files = "\n".join(files.get("temp", []))
+        all_files = files.get("main", []) + files.get("temp", [])
+        
+        return gr.update(value=f"## Current Project: {project_name}"), state.to_json(), main_files, temp_files, gr.update(choices=all_files)
+    except json.JSONDecodeError:
+        logger.error(f"Invalid state JSON: {state_json}")
+        return gr.update(value=""), state_json, "", "", gr.update(choices=[])
+    except Exception as e:
+        logger.error(f"Error in update_project_selection: {str(e)}")
+        return gr.update(value=""), state_json, "", "", gr.update(choices=[])
 
 async def upload_and_update(file: gr.File, state_json: str) -> Tuple[str, str, str, gr.update]:
     try:
@@ -114,29 +177,6 @@ async def upload_and_update(file: gr.File, state_json: str) -> Tuple[str, str, s
         logger.error(f"Error in upload_and_update: {str(e)}")
         return f"Upload failed: {str(e)}", "", [[]], gr.update(choices=[])
 
-async def update_project_selection(project_name: str, state_json: str) -> Tuple[gr.update, str, str, str, gr.update]:
-    try:
-        state = State.from_json(state_json)
-        if not state.token:
-            logger.warning("No token found in state during project selection")
-            return gr.update(value=""), state_json, "", "", gr.update(choices=[])
-        
-        state.update(project=project_name)
-        
-        files = await api.list_files(state.token, project_name)
-        
-        main_files = "\n".join(files.get("main", []))
-        temp_files = "\n".join(files.get("temp", []))
-        all_files = files.get("main", []) + files.get("temp", [])
-        
-        return gr.update(value=f"## Current Project: {project_name}"), state.to_json(), main_files, temp_files, gr.update(choices=all_files)
-    except json.JSONDecodeError:
-        logger.error(f"Invalid state JSON: {state_json}")
-        return gr.update(value=""), state_json, "", "", gr.update(choices=[])
-    except Exception as e:
-        logger.error(f"Error in update_project_selection: {str(e)}")
-        return gr.update(value=""), state_json, "", "", gr.update(choices=[])
-
 async def send_message(message: str, chat_history: List[Dict[str, str]], state: State) -> Tuple[List[Dict[str, str]], str]:
     try:
         state.add_chat_message("user", message)
@@ -147,29 +187,16 @@ async def send_message(message: str, chat_history: List[Dict[str, str]], state: 
         logger.error(f"Error in send_message: {str(e)}")
         return chat_history, f"Error: {str(e)}"
 
+def switch_to_project_tab():
+    return (
+        gr.update(visible=False),  # login_tab
+        gr.update(visible=True),   # project_tab
+        gr.update(visible=False),  # llm_tab
+        gr.update(value=""),  # new_project_name
+        gr.update(value="")   # project_dropdown
+    )
 
-async def handle_project_selection(action: str, new_project_name: str, existing_project: str, state_json: str) -> Tuple[str, str, gr.update, gr.update, bool]:
-    try:
-        state = State.from_json(state_json)
-        if action == CREATE_NEW_PROJECT:
-            message, state_json, project_dropdown, llm_selector = await create_new_project(new_project_name, state_json)
-            return message, state_json, project_dropdown, llm_selector, False
-        elif action == CHOOSE_EXISTING_PROJECT:
-            if not existing_project:
-                return "Please select a project", state_json, gr.update(), gr.update(), False
-            state.update(project=existing_project)
-            return f"Selected project: {existing_project}", state.to_json(), gr.update(), gr.update(value=existing_project), True
-        else:
-            return "Invalid action", state_json, gr.update(), gr.update(), False
-    except json.JSONDecodeError:
-        logger.error(f"Invalid state JSON: {state_json}")
-        return "Error: Invalid state", state_json, gr.update(), gr.update(), False
-    except Exception as e:
-        logger.error(f"Error in handle_project_selection: {str(e)}")
-        return f"Error: {str(e)}", state_json, gr.update(), gr.update(), False
-    
-
-
+# Shared Methods
 async def update_project_dropdown(state_json: str) -> gr.update:
     try:
         state = State.from_json(state_json)
@@ -182,24 +209,3 @@ async def update_project_dropdown(state_json: str) -> gr.update:
     except Exception as e:
         logger.error(f"Error updating project dropdown: {str(e)}")
         return gr.update()
-    
-def conditional_tab_switch(switch_to_llm: bool):
-    if switch_to_llm:
-        return gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
-    else:
-        return gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
-
-def switch_to_project_tab():
-    return (
-        gr.update(visible=False),  # login_tab
-        gr.update(visible=True),   # project_tab
-        gr.update(visible=False),  # llm_tab
-        gr.update(value=CREATE_NEW_PROJECT),  # project_action
-        gr.update(value=""),  # new_project_name
-        gr.update(value="")   # project_dropdown
-    )
-
-
-
-
-
